@@ -74,13 +74,8 @@ export class SmarteyeEngineService {
     const newConfigsStr = JSON.stringify(configs.sort((a,b) => a.exchange.localeCompare(b.exchange)));
     const oldConfigsStr = JSON.stringify(this.activeConfigs.sort((a,b) => a.exchange.localeCompare(b.exchange)));
     
-    const isConnectingOrOpen = this.proxySocket && (
-      this.proxySocket.readyState === WebSocket.OPEN ||
-      this.proxySocket.readyState === WebSocket.CONNECTING
-    );
-
-    if (isConnectingOrOpen && newConfigsStr === oldConfigsStr) {
-      console.log("[Engine] Configs identical and connection is active (OPEN/CONNECTING), skipping reconnect");
+    if (this.proxySocket?.readyState === WebSocket.OPEN && newConfigsStr === oldConfigsStr) {
+      console.log("[Engine] Configs identical, skipping reconnect");
       return;
     }
 
@@ -151,7 +146,6 @@ export class SmarteyeEngineService {
         this.isReconnecting = false;
         this.socketCount$.next(1);
         this.connectionStatus$.next('CONNECTED');
-        this.lastMsgTime = Date.now();
         ws.send(JSON.stringify({
           type: "CONNECT_EXCHANGES",
           configs: this.activeConfigs
@@ -172,10 +166,6 @@ export class SmarteyeEngineService {
       // Increased to 30s to be more resilient to background tab throttling
       this.lastMsgTime = Date.now();
       this.watchdogInterval = setInterval(() => {
-        if (this.proxySocket?.readyState !== WebSocket.OPEN) {
-          // Do not suspect stalls while connection is not open yet
-          return;
-        }
         const timeSinceLastMsg = Date.now() - this.lastMsgTime;
         const timeout = document.hidden ? 60000 : 30000;
         if (timeSinceLastMsg > timeout) {

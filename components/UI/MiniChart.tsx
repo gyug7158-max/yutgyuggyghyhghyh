@@ -141,6 +141,10 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
   const [fetchError, setFetchError] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(true);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const candlesRef = useRef<Candle[]>([]);
+  useEffect(() => {
+    candlesRef.current = candles;
+  }, [candles]);
   const [retryCount, setRetryCount] = useState(0);
   
   const [internalActiveTool, setInternalActiveTool] = useState<Drawing['type'] | 'ruler' | null>(null);
@@ -376,26 +380,50 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
     currentPriceRef.current = numericCurrentPrice;
   }, [numericCurrentPrice]);
 
-  // Sync the last candle close with the real-time numericPrice prop
+  const lastWsPriceRef = useRef<number | null>(null);
+
+
+
+  // Direct subscription to real-time tick streamed directly to updating candle for maximum responsiveness
   useEffect(() => {
-    if (candles.length > 0 && numericPrice && !isReplayMode) {
-      const lastIdx = candles.length - 1;
-      const lastCandle = candles[lastIdx];
-      
-      if (lastCandle.close !== numericPrice) {
-        setCandles(prev => {
-          if (prev.length === 0) return prev;
-          const next = [...prev];
-          const last = { ...next[next.length - 1] };
-          last.close = numericPrice;
-          if (numericPrice > last.high) last.high = numericPrice;
-          if (numericPrice < last.low) last.low = numericPrice;
-          next[next.length - 1] = last;
-          return next;
-        });
+    lastWsPriceRef.current = null; // Clear on symbol/exchange/marketType changes
+    if (isReplayMode) return;
+
+    chartStreamService.subscribeTicker(symbol, exchange || 'Binance', marketType);
+
+    const sub = chartStreamService.ticker$.subscribe(update => {
+      const normalizedExchange = (exchange || 'Binance').toLowerCase();
+      if (update.symbol === symbol && 
+          update.exchange.toLowerCase().includes(normalizedExchange) && 
+          update.marketType === marketType) {
+        
+        const tickPrice = update.price;
+        if (tickPrice) {
+          lastWsPriceRef.current = tickPrice;
+          if (candles.length > 0) {
+            setCandles(prev => {
+              if (prev.length === 0) return prev;
+              const next = [...prev];
+              const last = { ...next[next.length - 1] };
+              if (last.close !== tickPrice) {
+                last.close = tickPrice;
+                if (tickPrice > last.high) last.high = tickPrice;
+                if (tickPrice < last.low) last.low = tickPrice;
+                next[next.length - 1] = last;
+                return next;
+              }
+              return prev;
+            });
+          }
+        }
       }
-    }
-  }, [numericPrice, isReplayMode, candles.length]);
+    });
+
+    return () => {
+      sub.unsubscribe();
+      chartStreamService.unsubscribeTicker(symbol, exchange || 'Binance', marketType);
+    };
+  }, [symbol, exchange, marketType, isReplayMode, candles.length > 0]);
 
   const loadChartData = useCallback(async () => {
     setFetchError(false);
@@ -433,7 +461,6 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
       };
 
       fillVariants(isBybit);
-      fillVariants(!isBybit);
 
       const unique = variants.filter((v, i, s) => i === s.findIndex(t => t.s === v.s && t.f === v.f && t.b === v.b));
 
@@ -453,41 +480,25 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
       }
 
       if (candlesFound.length > 0) {
-        setCandles(prev => {
-          if (prev.length > 0) {
-            const lastPrev = prev[prev.length - 1];
-            const lastFound = candlesFound[candlesFound.length - 1];
-            if (lastPrev && lastFound && lastFound.time === lastPrev.time) {
-              lastFound.high = Math.max(lastFound.high, lastPrev.high);
-              lastFound.low = Math.min(lastFound.low, lastPrev.low);
-              lastFound.close = lastPrev.close;
-            }
-          }
-          return candlesFound;
-        });
+        setCandles(candlesFound);
         setActiveVariant(variantUsed);
-      } else if (!numericPrice) {
-        setFetchError(true);
+        setFetchError(false);
+      } else {
+        if (candlesRef.current.length === 0 && !numericPrice) {
+          setFetchError(true);
+        }
       }
     } catch (err) {
-      setFetchError(true); 
+      if (candlesRef.current.length === 0) {
+        setFetchError(true);
+      }
     } finally {
       setIsSyncing(false); 
       setIsChangingTimeframe(false);
     }
   }, [symbol, timeframe, marketType, exchange, numericPrice]);
 
-  useEffect(() => {
-    if (isReplayMode) return;
 
-    const interval = setInterval(() => {
-      if (!isSyncing) {
-        loadChartData();
-      }
-    }, 60000);
-    
-    return () => clearInterval(interval);
-  }, [symbol, timeframe, isSyncing, isReplayMode, loadChartData]);
 
   useEffect(() => {
     let isDisposed = false;

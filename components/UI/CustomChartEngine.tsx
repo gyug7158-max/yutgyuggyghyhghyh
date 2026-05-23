@@ -211,6 +211,68 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
     return saved ? parseFloat(saved) : 1.5;
   });
 
+  const dataRef = useRef(data);
+  useEffect(() => { dataRef.current = data; }, [data]);
+
+  const externalPriceRef = useRef(externalPrice);
+  useEffect(() => { externalPriceRef.current = externalPrice; }, [externalPrice]);
+
+  const timeframeRef = useRef(timeframe);
+  useEffect(() => { timeframeRef.current = timeframe; }, [timeframe]);
+
+  const activeToolRef = useRef(activeTool);
+  useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
+
+  const magnetEnabledRef = useRef(magnetEnabled);
+  useEffect(() => { magnetEnabledRef.current = magnetEnabled; }, [magnetEnabled]);
+
+  const alertsRef = useRef(alerts);
+  useEffect(() => { alertsRef.current = alerts; }, [alerts]);
+
+  const replayIndexRef = useRef(replayIndex);
+  useEffect(() => { replayIndexRef.current = replayIndex; }, [replayIndex]);
+
+  const isReplayPlayingRef = useRef(isReplayPlaying);
+  useEffect(() => { isReplayPlayingRef.current = isReplayPlaying; }, [isReplayPlaying]);
+
+  const positionsRef = useRef(positions);
+  useEffect(() => { positionsRef.current = positions; }, [positions]);
+
+  const pendingOrdersRef = useRef(pendingOrders);
+  useEffect(() => { pendingOrdersRef.current = pendingOrders; }, [pendingOrders]);
+
+  const isLongRef = useRef(isLong);
+  useEffect(() => { isLongRef.current = isLong; }, [isLong]);
+
+  const activeColorRef = useRef(activeColor);
+  useEffect(() => { activeColorRef.current = activeColor; }, [activeColor]);
+
+  const globalThicknessRef = useRef(globalThickness);
+  useEffect(() => { globalThicknessRef.current = globalThickness; }, [globalThickness]);
+
+  const selectedDrawingIdRef = useRef(selectedDrawingId);
+  useEffect(() => { selectedDrawingIdRef.current = selectedDrawingId; }, [selectedDrawingId]);
+
+  const onScrollRef = useRef(onScroll);
+  useEffect(() => { onScrollRef.current = onScroll; }, [onScroll]);
+
+  const onAlertChangeRef = useRef(onAlertChange);
+  useEffect(() => { onAlertChangeRef.current = onAlertChange; }, [onAlertChange]);
+
+  const onDrawingsChangeRef = useRef(onDrawingsChange);
+  useEffect(() => { onDrawingsChangeRef.current = onDrawingsChange; }, [onDrawingsChange]);
+
+  const onToolChangeRef = useRef(onToolChange);
+  useEffect(() => { onToolChangeRef.current = onToolChange; }, [onToolChange]);
+
+  const onDrawingCompleteRef = useRef(onDrawingComplete);
+  useEffect(() => { onDrawingCompleteRef.current = onDrawingComplete; }, [onDrawingComplete]);
+
+  const onReplayIndexChangeRef = useRef(onReplayIndexChange);
+  useEffect(() => { onReplayIndexChangeRef.current = onReplayIndexChange; }, [onReplayIndexChange]);
+
+  const triggerRenderRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     localDrawingsRef.current = drawings;
   }, [drawings]);
@@ -218,6 +280,10 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
   useEffect(() => {
     localAlertsRef.current = alerts;
   }, [alerts]);
+
+  useEffect(() => {
+    triggerRenderRef.current();
+  }, [data, externalPrice, timeframe, activeTool, magnetEnabled, alerts, replayIndex, isReplayPlaying, positions, pendingOrders, isLong, activeColor, globalThickness, selectedDrawingId, height]);
 
   const state = useRef({
     offsetX: -999,
@@ -277,8 +343,10 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
     };
 
     const getPriceRangeInfo = (h: number, PRICE_SCALE_WIDTH: number) => {
+      const data = dataRef.current;
+      const externalPrice = externalPriceRef.current;
       const { scaleY, offsetYPrice } = state.current;
-      const currentPriceVal = externalPrice || (data.length > 0 ? data[data.length - 1].close : 0);
+      const currentPriceVal = (data && data.length > 0 ? data[data.length - 1].close : 0) || externalPrice || 0;
       
       if (!data || data.length === 0) {
         if (currentPriceVal === 0) return { viewMax: 1, viewMin: -1, totalRange: 2 };
@@ -318,18 +386,22 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
     const yToPrice = (y: number, h: number, viewMax: number, totalRange: number) => viewMax - ((y / (h || 1)) * totalRange);
     
     const indexToX = (i: number, width: number) => {
+      const data = dataRef.current;
       if (!data || data.length === 0) return width / 2;
       const distFromRight = (data.length - 1 - i) - state.current.offsetX;
       return width - (distFromRight * state.current.scaleX) - (state.current.scaleX / 2);
     };
 
     const xToIndex = (x: number, width: number) => {
+      const data = dataRef.current;
       if (!data || data.length === 0) return 0;
       const distFromRight = (width - x - state.current.scaleX / 2) / state.current.scaleX;
       return (data.length - 1) - (distFromRight + state.current.offsetX);
     };
 
     const timeToX = (t: number, width: number) => {
+      const data = dataRef.current;
+      const timeframe = timeframeRef.current;
       if (!data || data.length === 0) return width / 2;
       
       // Binary search for the nearest indices
@@ -358,6 +430,8 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
     };
 
     const xToTime = (x: number, width: number) => {
+      const data = dataRef.current;
+      const timeframe = timeframeRef.current;
       if (!data || data.length === 0) return Date.now();
       const index = xToIndex(x, width);
       const i = Math.floor(index);
@@ -740,8 +814,17 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
       ctx.globalAlpha = 1.0;
     };
 
-    const render = () => {
+    const originalRender = () => {
       if (!canvas) return;
+      ctx.imageSmoothingEnabled = false;
+      const data = dataRef.current;
+      const externalPrice = externalPriceRef.current;
+      const alerts = alertsRef.current;
+      const replayIndex = replayIndexRef.current;
+      const isReplayPlaying = isReplayPlayingRef.current;
+      const positions = positionsRef.current;
+      const pendingOrders = pendingOrdersRef.current;
+
       const { width, h, dpr, isMobile, PRICE_SCALE_WIDTH, TIME_SCALE_HEIGHT, canvasW } = getDimensions();
       const { scaleX, mouseX, mouseY, snappedX, snappedY } = state.current;
       
@@ -749,6 +832,18 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
       ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
       
       const { viewMax, viewMin, totalRange } = getPriceRangeInfo(h, PRICE_SCALE_WIDTH);
+
+      // Replay auto-scrolling
+      if (replayIndex !== null && data[replayIndex] && isReplayPlaying && !state.current.isDragging) {
+        const x = indexToX(replayIndex, width);
+        if (x < 100) {
+          state.current.offsetX += 5;
+          render();
+        } else if (x > width - 100) {
+          state.current.offsetX -= 5;
+          render();
+        }
+      }
 
       // Grid
       const pixelsPerPrice = h / (totalRange || 1);
@@ -772,7 +867,7 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
       // Current Price Line
       const currentPriceVal = replayIndex !== null && data[replayIndex] 
         ? data[replayIndex].close 
-        : (externalPrice || (data.length > 0 ? data[data.length - 1].close : 0));
+        : ((data && data.length > 0 ? data[data.length - 1].close : 0) || externalPrice || 0);
       
       if (currentPriceVal > 0) {
         const currentPriceY = Math.floor(priceToY(currentPriceVal, h, viewMax, totalRange)) + 0.5;
@@ -830,7 +925,6 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
         const volumeChartHeight = h * 0.15;
         const rightX = width;
         const candleWidth = Math.max(1, scaleX - (scaleX > 4 ? 2 : 1));
-        const wickOffset = Math.floor(candleWidth / 2) + 0.5;
 
         // Batching: Group by type to minimize state changes
         const bulls = [];
@@ -841,8 +935,12 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
           const c = data[i];
           const isFuture = replayIndex !== null && i > replayIndex;
           const distFromRight = (data.length - 1 - i) - state.current.offsetX;
-          const x = rightX - (distFromRight * scaleX) - scaleX;
-          if (x + scaleX < 0 || x > width) continue;
+          
+          const centerX = Math.round(rightX - distFromRight * scaleX - scaleX / 2);
+          const bodyX = Math.round(centerX - candleWidth / 2);
+          const wickX = centerX + 0.5;
+
+          if (bodyX + candleWidth < 0 || bodyX > width) continue;
 
           let cOpen = c.open;
           let cClose = c.close;
@@ -853,23 +951,18 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
             continue;
           }
 
-          // If this is the active latest candle and we have a currentPriceVal, sync them
-          if (i === data.length - 1 && replayIndex === null && currentPriceVal > 0) {
-            cClose = currentPriceVal;
-            cHigh = Math.max(cHigh, currentPriceVal);
-            cLow = Math.min(cLow, currentPriceVal);
-          }
+
 
           const isBull = cClose >= cOpen;
           const openY = priceToY(cOpen, h, viewMax, totalRange);
           const closeY = priceToY(cClose, h, viewMax, totalRange);
           const highY = priceToY(cHigh, h, viewMax, totalRange);
           const lowY = priceToY(cLow, h, viewMax, totalRange);
-          const bodyY = Math.min(openY, closeY);
-          const bodyH = Math.max(1, Math.abs(openY - closeY));
+          const bodyY = Math.round(Math.min(openY, closeY));
+          const bodyH = Math.max(1, Math.round(Math.abs(openY - closeY)));
           const volH = c.volume ? (c.volume / maxVol) * volumeChartHeight : 0;
 
-          const item = { x, openY, closeY, highY, lowY, bodyY, bodyH, volH };
+          const item = { bodyX, bodyY, bodyH, highY, lowY, wickX, volH };
           if (isFuture) {
             if (!isReplayPlaying) future.push(item);
           }
@@ -883,16 +976,15 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
           ctx.beginPath();
           for (let i = 0; i < future.length; i++) {
             const f = future[i];
-            const wx = Math.floor(f.x + wickOffset) + 0.5;
-            ctx.moveTo(wx, f.highY); ctx.lineTo(wx, f.lowY);
+            ctx.moveTo(f.wickX, f.highY); ctx.lineTo(f.wickX, f.lowY);
           }
           ctx.stroke();
 
           ctx.fillStyle = COLORS.FUTURE_CANDLE;
           for (let i = 0; i < future.length; i++) {
             const f = future[i];
-            ctx.fillRect(f.x, f.bodyY, candleWidth, f.bodyH);
-            if (f.volH > 0) ctx.fillRect(f.x, h - f.volH, candleWidth, f.volH);
+            ctx.fillRect(f.bodyX, f.bodyY, candleWidth, f.bodyH);
+            if (f.volH > 0) ctx.fillRect(f.bodyX, h - f.volH, candleWidth, f.volH);
           }
         }
 
@@ -901,22 +993,21 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
           ctx.fillStyle = COLORS.VOLUME_UP;
           for (let i = 0; i < bulls.length; i++) {
             const b = bulls[i];
-            if (b.volH > 0) ctx.fillRect(b.x, h - b.volH, candleWidth, b.volH);
+            if (b.volH > 0) ctx.fillRect(b.bodyX, h - b.volH, candleWidth, b.volH);
           }
 
           ctx.strokeStyle = COLORS.BULL;
           ctx.beginPath();
           for (let i = 0; i < bulls.length; i++) {
             const b = bulls[i];
-            const wx = Math.floor(b.x + wickOffset) + 0.5;
-            ctx.moveTo(wx, b.highY); ctx.lineTo(wx, b.lowY);
+            ctx.moveTo(b.wickX, b.highY); ctx.lineTo(b.wickX, b.lowY);
           }
           ctx.stroke();
 
           ctx.fillStyle = COLORS.BULL;
           for (let i = 0; i < bulls.length; i++) {
             const b = bulls[i];
-            ctx.fillRect(b.x, b.bodyY, candleWidth, b.bodyH);
+            ctx.fillRect(b.bodyX, b.bodyY, candleWidth, b.bodyH);
           }
         }
 
@@ -925,22 +1016,21 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
           ctx.fillStyle = COLORS.VOLUME_DOWN;
           for (let i = 0; i < bears.length; i++) {
             const b = bears[i];
-            if (b.volH > 0) ctx.fillRect(b.x, h - b.volH, candleWidth, b.volH);
+            if (b.volH > 0) ctx.fillRect(b.bodyX, h - b.volH, candleWidth, b.volH);
           }
 
           ctx.strokeStyle = COLORS.BEAR;
           ctx.beginPath();
           for (let i = 0; i < bears.length; i++) {
             const b = bears[i];
-            const wx = Math.floor(b.x + wickOffset) + 0.5;
-            ctx.moveTo(wx, b.highY); ctx.lineTo(wx, b.lowY);
+            ctx.moveTo(b.wickX, b.highY); ctx.lineTo(b.wickX, b.lowY);
           }
           ctx.stroke();
 
           ctx.fillStyle = COLORS.BEAR;
           for (let i = 0; i < bears.length; i++) {
             const b = bears[i];
-            ctx.fillRect(b.x, b.bodyY, candleWidth, b.bodyH);
+            ctx.fillRect(b.bodyX, b.bodyY, candleWidth, b.bodyH);
           }
         }
       }
@@ -1386,6 +1476,15 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
       }
     };
 
+    let animationFrameId: number | null = null;
+    const render = () => {
+      if (animationFrameId !== null) return;
+      animationFrameId = requestAnimationFrame(() => {
+        animationFrameId = null;
+        originalRender();
+      });
+    };
+
     const updateSnapping = (mx: number, my: number) => {
       const { width, h, PRICE_SCALE_WIDTH } = getDimensions();
       const { viewMax, totalRange } = getPriceRangeInfo(h, PRICE_SCALE_WIDTH);
@@ -1396,26 +1495,35 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
       state.current.snappedPrice = snap.snappedPrice;
     };
 
-    const resize = () => {
+    const resize = (force: boolean | Event = false) => {
       if (!containerRef.current || !canvas) return;
       const { isMobile, PRICE_SCALE_WIDTH } = getDimensions();
       const dpr = window.devicePixelRatio || 1;
       const rect = containerRef.current.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) return;
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const width = rect.width - PRICE_SCALE_WIDTH;
-      if (state.current.offsetX === -999) {
-        // Calculate scaleX to fit exactly VISIBLE_DATA_CANDLES in (1 - GAP_PERCENT) of the width
-        state.current.scaleX = (width * (1 - GAP_PERCENT)) / VISIBLE_DATA_CANDLES;
-        // Calculate offsetX so that the first of the 100 candles starts at x=0
-        state.current.offsetX = VISIBLE_DATA_CANDLES - (width / state.current.scaleX);
+      
+      const newWidth = Math.round(rect.width * dpr);
+      const newHeight = Math.round(rect.height * dpr);
+      
+      const isForced = force === true;
+      if (isForced || canvas.width !== newWidth || canvas.height !== newHeight) {
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const width = rect.width - PRICE_SCALE_WIDTH;
+        if (state.current.offsetX === -999) {
+          // Calculate scaleX to fit exactly VISIBLE_DATA_CANDLES in (1 - GAP_PERCENT) of the width
+          state.current.scaleX = (width * (1 - GAP_PERCENT)) / VISIBLE_DATA_CANDLES;
+          // Calculate offsetX so that the first of the 100 candles starts at x=0
+          state.current.offsetX = VISIBLE_DATA_CANDLES - (width / state.current.scaleX);
+        }
       }
       render();
     };
 
     const handleWheel = (e: WheelEvent) => {
+      const data = dataRef.current;
+      const onScroll = onScrollRef.current;
       // Allow vertical scrolling of the container (the coin list) only if mouse is NOT over the chart area
       // or if the user specifically wants to scroll the page.
       // However, to satisfy the user request for zooming, we prioritize zooming when over the chart.
@@ -1453,6 +1561,9 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
     };
 
     const findSnappedPoint = (mx: number, my: number, width: number, h: number, viewMax: number, totalRange: number) => {
+      const data = dataRef.current;
+      const magnetEnabled = magnetEnabledRef.current;
+      const timeframe = timeframeRef.current;
       if (!data || data.length === 0) return { snappedX: mx, snappedY: my, snappedTime: Date.now(), snappedPrice: yToPrice(my, h, viewMax, totalRange) };
       const index = xToIndex(mx, width);
       const roundedIndex = Math.max(0, Math.round(index));
@@ -1498,6 +1609,13 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
     };
 
     const handleMouseMove = (e: MouseEvent) => {
+      const data = dataRef.current;
+      const activeTool = activeToolRef.current;
+      const alerts = alertsRef.current;
+      const externalPrice = externalPriceRef.current;
+      const onAlertChange = onAlertChangeRef.current;
+      const onScroll = onScrollRef.current;
+
       const rect = canvas.getBoundingClientRect(); const { width, h, PRICE_SCALE_WIDTH, canvasW } = getDimensions(); 
       const mX = e.clientX - rect.left; const mY = e.clientY - rect.top;
       state.current.mouseX = mX; state.current.mouseY = mY;
@@ -1633,6 +1751,12 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
     };
 
     const handleMouseDown = (e: MouseEvent) => {
+      const data = dataRef.current;
+      const activeTool = activeToolRef.current;
+      const isReplayPlaying = isReplayPlayingRef.current;
+      const onReplayIndexChange = onReplayIndexChangeRef.current;
+      const alerts = alertsRef.current;
+
       const rect = canvas.getBoundingClientRect(); const { width, h, PRICE_SCALE_WIDTH, canvasW } = getDimensions(); 
       const mX = e.clientX - rect.left; const mY = e.clientY - rect.top;
       const { viewMax, totalRange } = getPriceRangeInfo(h, PRICE_SCALE_WIDTH);
@@ -1760,6 +1884,14 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
     };
 
     const handleMouseUp = () => {
+      const onAlertChange = onAlertChangeRef.current;
+      const externalPrice = externalPriceRef.current;
+      const activeTool = activeToolRef.current;
+      const onDrawingComplete = onDrawingCompleteRef.current;
+      const activeColor = activeColorRef.current;
+      const globalThickness = globalThicknessRef.current;
+      const onDrawingsChange = onDrawingsChangeRef.current;
+
       if (state.current.draggingAlertId) {
         // Final sync if needed, though handleMouseMove now handles real-time updates
         const { snappedPrice } = state.current;
@@ -1796,19 +1928,6 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
       setIsDraggingToolbar(false); render();
     };
 
-    if (replayIndex !== null && data[replayIndex] && isReplayPlaying && !state.current.isDragging) {
-      const { width, h, PRICE_SCALE_WIDTH } = getDimensions();
-      const { viewMax, totalRange } = getPriceRangeInfo(h, PRICE_SCALE_WIDTH);
-      const x = indexToX(replayIndex, width);
-      if (x < 100) {
-        state.current.offsetX += 5;
-        render();
-      } else if (x > width - 100) {
-        state.current.offsetX -= 5;
-        render();
-      }
-    }
-
     const resizeObserver = new ResizeObserver(() => {
       resize();
     });
@@ -1829,9 +1948,13 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
       state.current.scaleY = 1.0;
     }
 
+    triggerRenderRef.current = render;
     resize(); render();
     
     return () => {
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+      }
       resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
       canvas.removeEventListener("wheel", handleWheel);
@@ -1839,7 +1962,7 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [data, height, isLong, activeTool, timeframe, activeColor, globalThickness, onDrawingsChange, externalPrice, selectedDrawingId, resetViewTrigger, onScroll, alerts, onAlertChange, replayIndex, isReplayPlaying, magnetEnabled]);
+  }, [resetViewTrigger]);
 
   const paletteStyle = useMemo(() => {
     return { maxWidth: '90vw' };

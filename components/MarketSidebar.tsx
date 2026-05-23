@@ -116,20 +116,17 @@ export const MarketSidebar: React.FC<MarketSidebarProps> = ({
   const fetchCoins = async () => {
     setLoadingCoins(true);
     try {
-      const fetchWithTimeout = async (url: string) => {
-        try {
-          const res = await fetch(url);
-          return await res.json();
-        } catch (e) {
-          throw e;
-        }
+      const fetchDirectProxy = async (proxyUrl: string) => {
+        const res = await fetch(proxyUrl);
+        if (!res.ok) throw new Error(`Proxy status ${res.status}`);
+        return await res.json();
       };
 
       const results = await Promise.allSettled([
-        fetchWithTimeout('/api/tickers/binance/spot'),
-        fetchWithTimeout('/api/tickers/binance/futures'),
-        fetchWithTimeout('/api/tickers/bybit/spot'),
-        fetchWithTimeout('/api/tickers/bybit/linear'),
+        fetchDirectProxy('/api/tickers/binance/spot'),
+        fetchDirectProxy('/api/tickers/binance/futures'),
+        fetchDirectProxy('/api/tickers/bybit/spot'),
+        fetchDirectProxy('/api/tickers/bybit/linear'),
       ]);
 
       let coins: MarketCoin[] = [];
