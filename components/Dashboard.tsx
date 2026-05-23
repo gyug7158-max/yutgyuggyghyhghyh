@@ -388,11 +388,17 @@ const Dashboard: React.FC<{
       if (fetchMarketCoinsRef.current) return;
       fetchMarketCoinsRef.current = true;
       try {
+        const fetchDirectProxy = async (proxyUrl: string) => {
+          const res = await fetch(proxyUrl);
+          if (!res.ok) throw new Error(`Proxy status ${res.status}`);
+          return await res.json();
+        };
+
         const results = await Promise.allSettled([
-          fetch('https://api.binance.com/api/v3/ticker/24hr').then(r => r.json()),
-          fetch('https://fapi.binance.com/fapi/v1/ticker/24hr').then(r => r.json()),
-          fetch('https://api.bybit.com/v5/market/tickers?category=spot').then(r => r.json()),
-          fetch('https://api.bybit.com/v5/market/tickers?category=linear').then(r => r.json()),
+          fetchDirectProxy('/api/tickers/binance/spot'),
+          fetchDirectProxy('/api/tickers/binance/futures'),
+          fetchDirectProxy('/api/tickers/bybit/spot'),
+          fetchDirectProxy('/api/tickers/bybit/linear'),
         ]);
 
         const globEx = ['AGIX', 'ALPACA', 'ALPHA', 'LEVER', 'LINA', 'MEMEFI', 'PORT3', 'SXP', 'USD1', 'UXLINK', 'VID'];

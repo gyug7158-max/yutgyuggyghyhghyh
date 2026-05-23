@@ -1746,15 +1746,26 @@ async function startServer() {
   // Proxy route for klines
   app.get("/api/klines/:exchange/:market", async (req, res) => {
     const { exchange, market } = req.params;
-    const { symbol, interval = '1h', limit = '24' } = req.query;
     try {
       if (exchange === 'binance') {
         const baseUrl = market === 'spot' ? 'https://api.binance.com/api/v3/klines' : 'https://fapi.binance.com/fapi/v1/klines';
-        const response = await axios.get(`${baseUrl}?symbol=${symbol}&interval=${interval}&limit=${limit}`);
+        const response = await axios.get(baseUrl, { params: req.query });
         res.json(response.data);
       } else {
         const category = market === 'spot' ? 'spot' : 'linear';
-        const response = await axios.get(`https://api.bybit.com/v5/market/kline?category=${category}&symbol=${symbol}&interval=${interval === '1h' ? '60' : interval}&limit=${limit}`);
+        const params: any = { ...req.query };
+        if (!params.category) {
+          params.category = category;
+        }
+        const intervalMap: Record<string, string> = {
+          '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+          '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
+          '1d': 'D', '1w': 'W'
+        };
+        if (params.interval && intervalMap[params.interval]) {
+          params.interval = intervalMap[params.interval];
+        }
+        const response = await axios.get(`https://api.bybit.com/v5/market/kline`, { params });
         res.json(response.data);
       }
     } catch (error: any) {
