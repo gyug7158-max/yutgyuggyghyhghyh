@@ -903,7 +903,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                                 setSelectedMethod('telegram_stars');
                                 setPaymentError(false);
                               }}
-                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 relative overflow-hidden group/tg ${
+                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 col-span-2 relative overflow-hidden group/tg ${
                                 selectedMethod === 'telegram_stars' 
                                 ? 'border-white/60 shadow-[0_10px_30px_rgba(255,255,255,0.15)] scale-[1.01]' 
                                 : 'border-white/10 hover:border-white/30'
@@ -962,7 +962,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                                 setSelectedMethod('card');
                                 setPaymentError(false);
                               }}
-                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 col-span-2 ${
+                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 ${
                                 selectedMethod === 'card' 
                                 ? 'bg-white border-white shadow-[0_10px_30px_rgba(255,255,255,0.2)] scale-[1.01]' 
                                 : 'border-white/10 hover:border-white/30'

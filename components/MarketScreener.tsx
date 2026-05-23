@@ -821,8 +821,8 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
             // First, try to filter by active settings
             const filtered = allRawData.filter(c => freshExchanges[c.exchange] && freshTypes[c.market]);
             
-            // Prefer BTC as the absolute default if no selection exists
-            const defaultCoin = allRawData.find(c => c.baseAsset === 'BTC' && c.market === 'SPOT') || 
+            // Prefer BTC FUTURES as the absolute default if no selection exists
+            const defaultCoin = allRawData.find(c => c.baseAsset === 'BTC' && c.market === 'FUTURES') || 
                                 allRawData.find(c => c.baseAsset === 'BTC') ||
                                 filtered[0] ||
                                 allRawData[0] || 
@@ -886,8 +886,8 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
   // Ensure default coin selection triggers as soon as data and settings are both ready
   useEffect(() => {
     if (isSettingsLoaded && !previewCoin && data.length > 0) {
-      // Find default BTC coin first, prioritizing BTC Spot
-      const defaultCoin = data.find(c => c.baseAsset === 'BTC' && c.market === 'SPOT') || 
+      // Find default BTC coin first, prioritizing BTC Futures
+      const defaultCoin = data.find(c => c.baseAsset === 'BTC' && c.market === 'FUTURES') || 
                           data.find(c => c.baseAsset === 'BTC') ||
                           data[0];
       
