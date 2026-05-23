@@ -251,27 +251,42 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
   };
 
   const fetchPart = async (targetSymbol: string, isFut: boolean, useBybit: boolean, tf: string, endTime?: number) => {
-    try {
+    const exchangeName = useBybit ? 'bybit' : 'binance';
+    const marketName = isFut ? 'futures' : 'spot';
+    
+    const params = new URLSearchParams({
+      symbol: targetSymbol.toUpperCase(),
+      interval: tf,
+      limit: '600'
+    });
+
+    if (endTime) {
       if (useBybit) {
-        const category = isFut ? 'linear' : 'spot';
-        const btf = getBybitTimeframe(tf);
-        let url = `/api/klines/bybit/${isFut ? 'futures' : 'spot'}?symbol=${targetSymbol.toUpperCase()}&interval=${btf}&limit=600`;
-        if (endTime) url += `&end=${endTime}`;
-        const resp = await fetch(url);
-        if (resp.status === 429) return 'RATE_LIMIT';
+        params.append('end', endTime.toString());
+      } else {
+        params.append('endTime', endTime.toString());
+      }
+    }
+
+    const proxyUrl = `/api/klines/${exchangeName}/${marketName}?${params.toString()}`;
+
+    try {
+      const resp = await fetch(proxyUrl);
+      if (resp.status === 429) return 'RATE_LIMIT';
+      if (!resp.ok) {
+        throw new Error(`Proxy fetch failed with status ${resp.status}`);
+      }
+      if (useBybit) {
         const json = await resp.json();
-        // Since the backend proxies the exact response from Bybit, json starts with retCode
-        if (json.retCode !== 0) return null;
+        if (json.retCode !== 0) throw new Error('Bybit API error');
         return { data: json.result?.list || null, source: 'BYBIT' };
       } else {
-        let url = `/api/klines/binance/${isFut ? 'futures' : 'spot'}?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=600`;
-        if (endTime) url += `&endTime=${endTime}`;
-        const resp = await fetch(url);
-        if (resp.status === 429) return 'RATE_LIMIT';
-        if (!resp.ok) return null;
         return { data: await resp.json(), source: 'BINANCE' };
       }
-    } catch (e) { return null; }
+    } catch (error) {
+      console.error(`[MiniChart] Proxy fetch failed for ${exchangeName}/${marketName}:`, error);
+      return null;
+    }
   };
 
   const parseKlines = (data: any[], source: string): Candle[] => {
