@@ -282,7 +282,10 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
       }
       if (useBybit) {
         const json = await resp.json();
-        if (json.retCode !== 0) throw new Error('Bybit API error');
+        if (json.retCode !== 0) {
+          // This is expected when trying multiple prefix variants for meme coins (e.g. 1000BTCUSDT)
+          return null;
+        }
         return { data: json.result?.list || null, source: 'BYBIT' };
       } else {
         return { data: await resp.json(), source: 'BINANCE' };
@@ -382,8 +385,6 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
 
   const lastWsPriceRef = useRef<number | null>(null);
 
-
-
   // Direct subscription to real-time tick streamed directly to updating candle for maximum responsiveness
   useEffect(() => {
     lastWsPriceRef.current = null; // Clear on symbol/exchange/marketType changes
@@ -480,7 +481,21 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
       }
 
       if (candlesFound.length > 0) {
-        setCandles(candlesFound);
+        setCandles(prev => {
+          if (prev.length > 0) {
+            const historyLast = { ...candlesFound[candlesFound.length - 1] };
+            const liveLast = prev[prev.length - 1];
+            if (historyLast.time === liveLast.time) {
+              historyLast.high = Math.max(historyLast.high, liveLast.high);
+              historyLast.low = Math.min(historyLast.low, liveLast.low);
+              historyLast.close = liveLast.close;
+              const merged = [...candlesFound];
+              merged[merged.length - 1] = historyLast;
+              return merged;
+            }
+          }
+          return candlesFound;
+        });
         setActiveVariant(variantUsed);
         setFetchError(false);
       } else {
@@ -498,7 +513,24 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
     }
   }, [symbol, timeframe, marketType, exchange, numericPrice]);
 
+  useEffect(() => {
+    if (isReplayMode) return;
 
+    let refreshMs = 15000; // 15s for 1m, 3m
+    if (timeframe.includes('h') || timeframe.includes('d') || timeframe.includes('w')) {
+      refreshMs = 60000; // 60s for hourly or higher
+    } else if (timeframe === '5m' || timeframe === '15m' || timeframe === '30m') {
+      refreshMs = 30000; // 30s for moderate timeframes
+    }
+
+    const interval = setInterval(() => {
+      if (!isSyncing) {
+        loadChartData();
+      }
+    }, refreshMs);
+    
+    return () => clearInterval(interval);
+  }, [symbol, timeframe, isSyncing, isReplayMode, loadChartData]);
 
   useEffect(() => {
     let isDisposed = false;

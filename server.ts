@@ -1765,11 +1765,20 @@ async function startServer() {
         if (params.interval && intervalMap[params.interval]) {
           params.interval = intervalMap[params.interval];
         }
+        
+        // Log params for troubleshooting
+        console.log(`Bybit klines request params:`, JSON.stringify(params));
+        
         const response = await axios.get(`https://api.bybit.com/v5/market/kline`, { params });
         res.json(response.data);
       }
     } catch (error: any) {
-      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      const errRes = error?.response?.data;
+      console.error(`Kline proxy error for ${exchange}/${market}:`, errRes || error.message);
+      res.status(500).json({ 
+        error: error instanceof Error ? error.message : String(error), 
+        details: errRes || null 
+      });
     }
   });
 
