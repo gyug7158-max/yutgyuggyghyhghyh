@@ -12,14 +12,14 @@ export interface TickerData {
 export class ChartStreamService {
   private static instance: ChartStreamService;
   private tickerSubject = new Subject<TickerData>();
-  public ticker$ = this.tickerSubject.asObservable().pipe(throttleTime(50));
+  public ticker$ = this.tickerSubject.asObservable().pipe(throttleTime(1000));
   public connectionStatus$ = new BehaviorSubject<'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED'>('DISCONNECTED');
 
   private socket: WebSocket | null = null;
   private reconnectTimer: any = null;
   private watchdogTimer: any = null;
   private lastMessageTime = Date.now();
-  private tickerConfigs = new Map<string, number>();
+  private tickerConfigs = new Set<string>();
 
   private constructor() {
     this.connect();
@@ -117,7 +117,7 @@ export class ChartStreamService {
   private reSubscribeAll() {
     if (this.socket?.readyState === WebSocket.OPEN && this.tickerConfigs.size > 0) {
       const tickers: any[] = [];
-      this.tickerConfigs.forEach((count, key) => {
+      this.tickerConfigs.forEach(key => {
         const [exchange, marketType, symbol] = key.split('|');
         tickers.push({ exchange, marketType, symbol });
       });
@@ -127,10 +127,8 @@ export class ChartStreamService {
 
   public subscribeTicker(symbol: string, exchange: string, marketType: string) {
     const key = `${exchange}|${marketType}|${symbol}`;
-    const currentCount = this.tickerConfigs.get(key) || 0;
-    this.tickerConfigs.set(key, currentCount + 1);
-
-    if (currentCount === 0) {
+    if (!this.tickerConfigs.has(key)) {
+      this.tickerConfigs.add(key);
       if (this.socket?.readyState === WebSocket.OPEN) {
         this.socket.send(JSON.stringify({
           type: "SUBSCRIBE_TICKERS",
@@ -142,8 +140,7 @@ export class ChartStreamService {
 
   public unsubscribeTicker(symbol: string, exchange: string, marketType: string) {
     const key = `${exchange}|${marketType}|${symbol}`;
-    const currentCount = this.tickerConfigs.get(key) || 0;
-    if (currentCount <= 1) {
+    if (this.tickerConfigs.has(key)) {
       this.tickerConfigs.delete(key);
       if (this.socket?.readyState === WebSocket.OPEN) {
         this.socket.send(JSON.stringify({
@@ -151,8 +148,6 @@ export class ChartStreamService {
           tickers: [{ symbol, exchange, marketType }]
         }));
       }
-    } else {
-      this.tickerConfigs.set(key, currentCount - 1);
     }
   }
 }

@@ -429,7 +429,7 @@ export const translations = {
     hours: 'Часы',
     days_weeks: 'Дни / Недели',
     card: 'Карта',
-    crypto: 'Крипта',
+    crypto: 'Крипто',
     telegram_stars: 'Telegram Stars',
     period_label: 'Период',
     ending_label: 'Окончание',
