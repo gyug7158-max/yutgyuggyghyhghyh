@@ -853,13 +853,6 @@ export const CustomChartEngine: React.FC<CustomChartEngineProps> = ({
             continue;
           }
 
-          // If this is the active latest candle and we have a currentPriceVal, sync them
-          if (i === data.length - 1 && replayIndex === null && currentPriceVal > 0) {
-            cClose = currentPriceVal;
-            cHigh = Math.max(cHigh, currentPriceVal);
-            cLow = Math.min(cLow, currentPriceVal);
-          }
-
           const isBull = cClose >= cOpen;
           const openY = priceToY(cOpen, h, viewMax, totalRange);
           const closeY = priceToY(cClose, h, viewMax, totalRange);
