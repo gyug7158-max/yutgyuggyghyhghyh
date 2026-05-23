@@ -5,9 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "start": "tsx server.ts",
-    "build": "vite build",
-    "preview": "vite preview",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -19,15 +18,18 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "firebase": "^12.13.0",
     "fs-extra": "^11.3.3",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.556.0",
     "motion": "^12.38.0",
     "node-telegram-bot-api": "^0.67.0",
+    "nodemailer": "^8.0.7",
     "pg": "^8.20.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "react-markdown": "^10.1.0",
+    "react-router-dom": "^7.14.2",
     "recharts": "^3.8.1",
     "remark-gfm": "^4.0.1",
     "rxjs": "^7.8.2",
@@ -43,8 +45,10 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.14.0",
     "@types/node-telegram-bot-api": "^0.64.14",
+    "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.20.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "esbuild": "^0.28.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

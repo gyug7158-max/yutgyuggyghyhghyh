@@ -9,6 +9,7 @@ import { Language, translations } from '../../src/translations';
 import { MarketType } from '../../models';
 import { CustomChartEngine, Candle, Drawing } from './CustomChartEngine';
 import { TradingSimulatorService } from '../../services/trading-simulator.service';
+import { chartStreamService } from '../../services/chart-stream.service';
 import { CustomUndoIcon, CustomRedoIcon } from '../MarketScreener';
 
 export interface MiniChartProps {
@@ -60,6 +61,7 @@ export interface MiniChartProps {
   onMagnetChange?: (enabled: boolean) => void;
   drawings?: Drawing[];
   onDrawingsChange?: (drawings: Drawing[]) => void;
+  hideToolbar?: boolean;
 }
 
 let globalRequestIndex = 0;
@@ -132,12 +134,17 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
   setReplaySpeed: propsSetReplaySpeed, alerts = [], onAlertChange, positions = [], 
   pendingOrders = [], language = 'ru', isAdditional = false,
   activeTool: propsActiveTool, onToolChange, magnetEnabled: propsMagnetEnabled, onMagnetChange,
-  drawings: propsDrawings, onDrawingsChange
+  drawings: propsDrawings, onDrawingsChange,
+  hideToolbar = false
 }, ref) => {
   const t = translations[language];
   const [fetchError, setFetchError] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(true);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const candlesRef = useRef<Candle[]>([]);
+  useEffect(() => {
+    candlesRef.current = candles;
+  }, [candles]);
   const [retryCount, setRetryCount] = useState(0);
   
   const [internalActiveTool, setInternalActiveTool] = useState<Drawing['type'] | 'ruler' | null>(null);
@@ -204,7 +211,7 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
       }
     }
   }, [isReplayMode, candles.length > 0]);
-  
+
   const [activeVariant, setActiveVariant] = useState<any>(null);
   const drawingsRef = useRef<Drawing[]>([]);
   useEffect(() => { drawingsRef.current = drawings; }, [drawings]);
@@ -248,28 +255,42 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
   };
 
   const fetchPart = async (targetSymbol: string, isFut: boolean, useBybit: boolean, tf: string, endTime?: number) => {
-    try {
+    const exchangeName = useBybit ? 'bybit' : 'binance';
+    const marketName = isFut ? 'futures' : 'spot';
+    
+    const params = new URLSearchParams({
+      symbol: targetSymbol.toUpperCase(),
+      interval: tf,
+      limit: '600'
+    });
+
+    if (endTime) {
       if (useBybit) {
-        const category = isFut ? 'linear' : 'spot';
-        const btf = getBybitTimeframe(tf);
-        let url = `https://api.bybit.com/v5/market/kline?category=${category}&symbol=${targetSymbol.toUpperCase()}&interval=${btf}&limit=600`;
-        if (endTime) url += `&end=${endTime}`;
-        const resp = await fetch(url);
-        if (resp.status === 429) return 'RATE_LIMIT';
+        params.append('end', endTime.toString());
+      } else {
+        params.append('endTime', endTime.toString());
+      }
+    }
+
+    const proxyUrl = `/api/klines/${exchangeName}/${marketName}?${params.toString()}`;
+
+    try {
+      const resp = await fetch(proxyUrl);
+      if (resp.status === 429) return 'RATE_LIMIT';
+      if (!resp.ok) {
+        throw new Error(`Proxy fetch failed with status ${resp.status}`);
+      }
+      if (useBybit) {
         const json = await resp.json();
-        if (json.retCode !== 0) return null;
+        if (json.retCode !== 0) throw new Error('Bybit API error');
         return { data: json.result?.list || null, source: 'BYBIT' };
       } else {
-        const host = isFut ? 'fapi.binance.com' : 'api.binance.com';
-        const path = isFut ? '/fapi/v1/klines' : '/api/v3/klines';
-        let url = `https://${host}${path}?symbol=${targetSymbol.toUpperCase()}&interval=${tf}&limit=600`;
-        if (endTime) url += `&endTime=${endTime}`;
-        const resp = await fetch(url);
-        if (resp.status === 429) return 'RATE_LIMIT';
-        if (!resp.ok) return null;
         return { data: await resp.json(), source: 'BINANCE' };
       }
-    } catch (e) { return null; }
+    } catch (error) {
+      console.error(`[MiniChart] Proxy fetch failed for ${exchangeName}/${marketName}:`, error);
+      return null;
+    }
   };
 
   const parseKlines = (data: any[], source: string): Candle[] => {
@@ -341,77 +362,146 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
     }
   };
 
+  const [connectionStatus, setConnectionStatus] = useState<'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED'>('DISCONNECTED');
+
   useEffect(() => {
-    if (!numericCurrentPrice || isNaN(numericCurrentPrice)) return;
-    
-    const tfMs = getTimeframeMs(timeframe);
-    
-    const updateCandles = () => {
-      if (isSyncing) return;
-      const now = Date.now();
-      setCandles(prev => {
-        if (prev.length === 0) {
-          // Fallback: If no history, create initial candle to allow rendering
-          const currentCandleTime = Math.floor(now / tfMs) * tfMs;
-          return [{
-            time: currentCandleTime,
-            open: numericCurrentPrice,
-            high: numericCurrentPrice,
-            low: numericCurrentPrice,
-            close: numericCurrentPrice,
-            volume: 0
-          }];
-        }
-        
-        const last = prev[prev.length - 1];
-        const nextCandleTime = last.time + tfMs;
-        
-        // Robust check: if current time passed the end of the last candle
-        if (now >= nextCandleTime) {
-          // New candle period started
-          const newCandleTime = Math.floor(now / tfMs) * tfMs;
-          
-          // Avoid duplicate timestamps
-          if (newCandleTime <= last.time) return prev;
+    const sub = chartStreamService.connectionStatus$.subscribe(status => {
+      if (status === 'CONNECTED' && connectionStatus !== 'CONNECTED' && connectionStatus !== 'RECONNECTING') {
+        // Just restored connection from DISCONNECTED - refresh chart data to fill any gaps
+        loadChartData();
+      }
+      setConnectionStatus(status);
+    });
+    return () => sub.unsubscribe();
+  }, [connectionStatus, symbol, timeframe]);
 
-          return [...prev, {
-            time: newCandleTime,
-            open: numericCurrentPrice,
-            high: numericCurrentPrice,
-            low: numericCurrentPrice,
-            close: numericCurrentPrice,
-            volume: 0
-          }];
-        } else {
-          // Update existing candle
-          const updatedLast = { ...last };
-          updatedLast.close = numericCurrentPrice;
-          updatedLast.high = Math.max(updatedLast.high, numericCurrentPrice);
-          updatedLast.low = Math.min(updatedLast.low, numericCurrentPrice);
-          
-          // Check if anything actually changed to avoid unnecessary re-renders
-          if (updatedLast.close === last.close && 
-              updatedLast.high === last.high && 
-              updatedLast.low === last.low) {
-            return prev;
+  const currentPriceRef = useRef<number>(numericCurrentPrice);
+  useEffect(() => {
+    currentPriceRef.current = numericCurrentPrice;
+  }, [numericCurrentPrice]);
+
+  const lastWsPriceRef = useRef<number | null>(null);
+
+
+
+  // Direct subscription to real-time tick streamed directly to updating candle for maximum responsiveness
+  useEffect(() => {
+    lastWsPriceRef.current = null; // Clear on symbol/exchange/marketType changes
+    if (isReplayMode) return;
+
+    chartStreamService.subscribeTicker(symbol, exchange || 'Binance', marketType);
+
+    const sub = chartStreamService.ticker$.subscribe(update => {
+      const normalizedExchange = (exchange || 'Binance').toLowerCase();
+      if (update.symbol === symbol && 
+          update.exchange.toLowerCase().includes(normalizedExchange) && 
+          update.marketType === marketType) {
+        
+        const tickPrice = update.price;
+        if (tickPrice) {
+          lastWsPriceRef.current = tickPrice;
+          if (candles.length > 0) {
+            setCandles(prev => {
+              if (prev.length === 0) return prev;
+              const next = [...prev];
+              const last = { ...next[next.length - 1] };
+              if (last.close !== tickPrice) {
+                last.close = tickPrice;
+                if (tickPrice > last.high) last.high = tickPrice;
+                if (tickPrice < last.low) last.low = tickPrice;
+                next[next.length - 1] = last;
+                return next;
+              }
+              return prev;
+            });
           }
-          
-          return [...prev.slice(0, -1), updatedLast];
         }
-      });
-    };
+      }
+    });
 
-    updateCandles();
+    return () => {
+      sub.unsubscribe();
+      chartStreamService.unsubscribeTicker(symbol, exchange || 'Binance', marketType);
+    };
+  }, [symbol, exchange, marketType, isReplayMode, candles.length > 0]);
+
+  const loadChartData = useCallback(async () => {
+    setFetchError(false);
+    setIsSyncing(true);
     
-    // Run an interval to catch rollovers even if price doesn't move
-    const interval = setInterval(updateCandles, 200);
-    return () => clearInterval(interval);
-  }, [numericCurrentPrice, timeframe, symbol, isSyncing]);
+    try {
+      const rawSymbol = symbol.replace(/[\/\s]/g, '').toUpperCase();
+      const cleanBase = rawSymbol.replace(/USDT$/, '');
+      const baseNoP = cleanBase.replace(/^(1000000|10000|1000)/, '');
+      
+      const SYMBOL_BLACKLIST = [
+        '1000ENAUSDT', '1000SATSUSDT', '1000BONKUSDT', '1000RATSUSDT', 
+        '1000CATIUSDT', '1000XUSDT', '1000000ENAUSDT', '10000ENAUSDT',
+        '10000BTCUSDT', '10000LTCUSDT', '1000000LTCUSDT'
+      ];
+
+      const variants: { s: string, f: boolean, b: boolean }[] = [];
+      const isBybit = exchange?.toLowerCase().includes('bybit');
+
+      const fillVariants = (bybit: boolean) => {
+        if (bybit) {
+          variants.push({ s: rawSymbol, f: marketType === 'FUTURES', b: true });
+          variants.push({ s: rawSymbol, f: marketType !== 'FUTURES', b: true });
+          ['1000', '1000000', '10000'].forEach(p => {
+            variants.push({ s: p + baseNoP + 'USDT', f: true, b: true });
+            variants.push({ s: p + baseNoP + 'USDT', f: false, b: true });
+          });
+          variants.push({ s: baseNoP + 'USDT', f: false, b: true });
+          variants.push({ s: baseNoP + 'USDT', f: true, b: true });
+        } else {
+          const binanceSymbol = baseNoP + 'USDT';
+          variants.push({ s: binanceSymbol, f: marketType === 'FUTURES', b: false });
+          variants.push({ s: binanceSymbol, f: marketType !== 'FUTURES', b: false });
+        }
+      };
+
+      fillVariants(isBybit);
+
+      const unique = variants.filter((v, i, s) => i === s.findIndex(t => t.s === v.s && t.f === v.f && t.b === v.b));
+
+      let candlesFound: Candle[] = [];
+      let variantUsed: any = null;
+
+      for (const v of unique) {
+        if (!v.b && (SYMBOL_BLACKLIST.includes(v.s) || /^\d+/.test(v.s))) continue;
+        
+        const res = await fetchPart(v.s, v.f, v.b, timeframe);
+        if (res === 'RATE_LIMIT') { await new Promise(r => setTimeout(r, 600)); continue; }
+        if (res && Array.isArray(res.data) && res.data.length > 0) {
+          candlesFound = parseKlines(res.data, res.source);
+          variantUsed = v;
+          break;
+        }
+      }
+
+      if (candlesFound.length > 0) {
+        setCandles(candlesFound);
+        setActiveVariant(variantUsed);
+        setFetchError(false);
+      } else {
+        if (candlesRef.current.length === 0 && !numericPrice) {
+          setFetchError(true);
+        }
+      }
+    } catch (err) {
+      if (candlesRef.current.length === 0) {
+        setFetchError(true);
+      }
+    } finally {
+      setIsSyncing(false); 
+      setIsChangingTimeframe(false);
+    }
+  }, [symbol, timeframe, marketType, exchange, numericPrice]);
+
+
 
   useEffect(() => {
     let isDisposed = false;
-    setFetchError(false);
-    setIsSyncing(true);
     
     // Detect symbol change
     if (prevSymbolRef.current !== symbol) {
@@ -438,97 +528,9 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
     setLoadedPartsCount(1);
     setActiveVariant(null);
 
-    const loadChartData = async () => {
-      const myIndex = globalRequestIndex++;
-      await new Promise(resolve => setTimeout(resolve, (myIndex % 50) * 80));
-      if (isDisposed) return;
-
-      try {
-        const rawSymbol = symbol.replace(/[\/\s]/g, '').toUpperCase();
-        const cleanBase = rawSymbol.replace(/USDT$/, '');
-        // Fix regex order: longest first to avoid partial matches (e.g. 1000 matching first 4 digits of 1000000)
-        const baseNoP = cleanBase.replace(/^(1000000|10000|1000)/, '');
-        
-        // Symbols that are known to cause issues or don't exist on Binance
-        const SYMBOL_BLACKLIST = [
-          '1000ENAUSDT', '1000SATSUSDT', '1000BONKUSDT', '1000RATSUSDT', 
-          '1000CATIUSDT', '1000XUSDT', '1000000ENAUSDT', '10000ENAUSDT',
-          '10000BTCUSDT', '10000LTCUSDT', '1000000LTCUSDT'
-        ];
-
-        const variants: { s: string, f: boolean, b: boolean }[] = [];
-        const isBybit = exchange?.toLowerCase().includes('bybit');
-
-        const fillVariants = (bybit: boolean) => {
-          if (bybit) {
-            // Bybit logic: supports prefixes
-            variants.push({ s: rawSymbol, f: marketType === 'FUTURES', b: true });
-            variants.push({ s: rawSymbol, f: marketType !== 'FUTURES', b: true });
-            ['1000', '1000000', '10000'].forEach(p => {
-              variants.push({ s: p + baseNoP + 'USDT', f: true, b: true });
-              variants.push({ s: p + baseNoP + 'USDT', f: false, b: true });
-            });
-            variants.push({ s: baseNoP + 'USDT', f: false, b: true });
-            variants.push({ s: baseNoP + 'USDT', f: true, b: true });
-          } else {
-            // Binance logic: NEVER uses prefixes like 1000, 1000000
-            // We strictly use the base symbol without any leading digits that look like Bybit prefixes
-            const binanceSymbol = baseNoP + 'USDT';
-            variants.push({ s: binanceSymbol, f: marketType === 'FUTURES', b: false });
-            variants.push({ s: binanceSymbol, f: marketType !== 'FUTURES', b: false });
-          }
-        };
-
-        fillVariants(isBybit);
-        fillVariants(!isBybit);
-
-        const unique = variants.filter((v, i, s) => i === s.findIndex(t => t.s === v.s && t.f === v.f && t.b === v.b));
-
-        let candlesFound: Candle[] = [];
-        let variantUsed: any = null;
-
-        for (const v of unique) {
-          if (isDisposed) break;
-          
-          // Skip blacklisted symbols for Binance to avoid CORS/400 errors
-          // Also skip any symbol for Binance that still starts with digits (likely a missed Bybit prefix)
-          if (!v.b && (SYMBOL_BLACKLIST.includes(v.s) || /^\d+/.test(v.s))) continue;
-          
-          const res = await fetchPart(v.s, v.f, v.b, timeframe);
-          if (res === 'RATE_LIMIT') { await new Promise(r => setTimeout(r, 600)); continue; }
-          if (res && Array.isArray(res.data) && res.data.length > 0) {
-            candlesFound = parseKlines(res.data, res.source);
-            variantUsed = v;
-            break;
-          }
-        }
-
-        if (isDisposed) return;
-
-        if (candlesFound.length > 0) {
-          setCandles(candlesFound);
-          setActiveVariant(variantUsed);
-          setIsSyncing(false);
-          setIsChangingTimeframe(false);
-        } else {
-          // No history found after all variants
-          setIsSyncing(false);
-          setIsChangingTimeframe(false);
-          // Only error if price is also missing
-          if (!numericPrice) setFetchError(true);
-        }
-      } catch (err) {
-        if (!isDisposed) { 
-          setFetchError(true); 
-          setIsSyncing(false); 
-          setIsChangingTimeframe(false);
-        }
-      }
-    };
-
     loadChartData();
     return () => { isDisposed = true; };
-  }, [symbol, timeframe, marketType, retryCount, exchange]);
+  }, [symbol, timeframe, marketType, retryCount, exchange, loadChartData]);
 
   useEffect(() => {
     if (isReplayMode && replayIndex !== null && candles[replayIndex]) {
@@ -621,152 +623,154 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
   return (
     <div className={`flex h-full w-full ${isAdditional ? 'bg-[#0d0d0d]' : 'bg-[#020203]'} text-white relative overflow-hidden group/chart border border-purple-900/40 hover:border-purple-800/60 rounded-lg flex-col transition-all duration-500 shadow-2xl`}>
       
-      <div className="flex-1 flex min-h-0 relative gap-1.5 p-1.5">
-        <div className="w-8 sm:w-10 border border-white/10 bg-white/5 backdrop-blur-md flex flex-col items-center py-3 gap-2 shrink-0 z-50 overflow-y-auto no-scrollbar max-h-full rounded-xl shadow-xl">
-          <button 
-            onClick={() => {
-              setActiveTool(null);
-              setIsLineMenuOpen(false);
-            }}
-            className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
-              activeTool === null 
-              ? 'bg-zinc-700 text-white' 
-              : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
-            }`}
-          >
-            <CustomCrosshairIcon />
-          </button>
-
-          {/* UNDO/REDO - Mobile only at top */}
-          <div className="flex md:hidden flex-col gap-2 w-full items-center py-1 border-b border-white/5 mb-1 shrink-0">
+      <div className={`flex-1 flex min-h-0 relative gap-1.5 p-1.5`}>
+        {!hideToolbar && (
+          <div className="w-8 sm:w-10 border border-white/10 bg-white/5 backdrop-blur-md flex flex-col items-center py-3 gap-2 shrink-0 z-50 overflow-y-auto no-scrollbar max-h-full rounded-xl shadow-xl">
             <button 
-              onClick={undo}
-              className={`w-6 h-6 flex items-center justify-center rounded-lg transition-all ${currentStep > 0 ? 'text-white hover:bg-white/10' : 'text-gray-700 cursor-not-allowed'}`}
-              disabled={currentStep === 0}
+              onClick={() => {
+                setActiveTool(null);
+                setIsLineMenuOpen(false);
+              }}
+              className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
+                activeTool === null 
+                ? 'bg-zinc-700 text-white' 
+                : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+              }`}
             >
-              <CustomUndoIcon size={16} />
+              <CustomCrosshairIcon />
             </button>
-            <button 
-              onClick={redo}
-              className={`w-6 h-6 flex items-center justify-center rounded-lg transition-all ${currentStep < history.length - 1 ? 'text-white hover:bg-white/10' : 'text-gray-700 cursor-not-allowed'}`}
-              disabled={currentStep >= history.length - 1}
-            >
-              <CustomRedoIcon size={16} />
-            </button>
-          </div>
 
-          <div className="w-5 sm:w-6 h-[1px] bg-white/10 mx-1 shrink-0"></div>
-
-          <button 
-            onClick={() => setActiveTool(activeTool === 'brush' ? null : 'brush')}
-            className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
-              activeTool === 'brush' 
-              ? 'bg-zinc-700 text-white' 
-              : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
-            }`}
-          >
-            <Brush size={14} className="sm:w-[16px] sm:h-[16px]" />
-          </button>
-
-          {/* Mobile Grouped Line Tools */}
-          <div className="md:hidden relative" ref={lineMenuRef}>
-            <div className="flex items-center gap-0.5">
+            {/* UNDO/REDO - Mobile only at top */}
+            <div className="flex md:hidden flex-col gap-2 w-full items-center py-1 border-b border-white/5 mb-1 shrink-0">
               <button 
-                onClick={() => {
-                  setActiveTool(activeTool === lastLineTool ? null : lastLineTool);
-                  setIsLineMenuOpen(false);
-                }}
-                className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-l-lg transition-all group/btn relative shrink-0 ${
-                  ['trendline', 'ray', 'hline', 'hray', 'vline', 'crossline'].includes(activeTool as string)
-                  ? 'bg-zinc-700 text-white' 
-                  : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+                onClick={undo}
+                className={`w-6 h-6 flex items-center justify-center rounded-lg transition-all ${currentStep > 0 ? 'text-white hover:bg-white/10' : 'text-gray-700 cursor-not-allowed'}`}
+                disabled={currentStep === 0}
+              >
+                <CustomUndoIcon size={16} />
+              </button>
+              <button 
+                onClick={redo}
+                className={`w-6 h-6 flex items-center justify-center rounded-lg transition-all ${currentStep < history.length - 1 ? 'text-white hover:bg-white/10' : 'text-gray-700 cursor-not-allowed'}`}
+                disabled={currentStep >= history.length - 1}
+              >
+                <CustomRedoIcon size={16} />
+              </button>
+            </div>
+
+            <div className="w-5 sm:w-6 h-[1px] bg-white/10 mx-1 shrink-0"></div>
+
+            <button 
+              onClick={() => setActiveTool(activeTool === 'brush' ? null : 'brush')}
+              className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
+                activeTool === 'brush' 
+                ? 'bg-zinc-700 text-white' 
+                : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+              }`}
+            >
+              <Brush size={14} className="sm:w-[16px] sm:h-[16px]" />
+            </button>
+
+            {/* Mobile Grouped Line Tools */}
+            <div className="md:hidden relative" ref={lineMenuRef}>
+              <div className="flex items-center gap-0.5">
+                <button 
+                  onClick={() => {
+                    setActiveTool(activeTool === lastLineTool ? null : lastLineTool);
+                    setIsLineMenuOpen(false);
+                  }}
+                  className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-l-lg transition-all group/btn relative shrink-0 ${
+                    ['trendline', 'ray', 'hline', 'hray', 'vline', 'crossline'].includes(activeTool as string)
+                    ? 'bg-zinc-700 text-white' 
+                    : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+                  }`}
+                >
+                  {lastLineTool === 'trendline' && <TrendLineIcon />}
+                  {lastLineTool === 'ray' && <RayIcon />}
+                  {lastLineTool === 'hline' && <HLineIcon />}
+                  {lastLineTool === 'hray' && <HRayIcon />}
+                  {lastLineTool === 'vline' && <VLineIcon />}
+                  {lastLineTool === 'crossline' && <CrossLineIcon />}
+                </button>
+                
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsLineMenuOpen(!isLineMenuOpen);
+                  }}
+                  className={`w-3 h-6 sm:h-7 flex items-center justify-center rounded-r-md transition-all ${isLineMenuOpen ? 'text-white bg-purple-500/30' : 'text-gray-400 bg-white/5 hover:bg-white/10'}`}
+                >
+                  <ChevronRight size={10} className={`transition-transform duration-200 ${isLineMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+              </div>
+            </div>
+
+            {/* Desktop Individual Line Tools */}
+            <div className="hidden md:flex flex-col gap-1.5 items-center">
+              {[
+                { id: 'trendline', icon: <TrendLineIcon />, label: t.trend_line || 'Trend Line' },
+                { id: 'ray', icon: <RayIcon />, label: t.ray || 'Ray' },
+                { id: 'hline', icon: <HLineIcon />, label: t.h_line || 'Horizontal Line' },
+                { id: 'hray', icon: <HRayIcon />, label: t.h_ray || 'Horizontal Ray' },
+                { id: 'vline', icon: <VLineIcon />, label: t.v_line || 'Vertical Line' },
+                { id: 'crossline', icon: <CrossLineIcon />, label: t.cross_line || 'Cross Line' },
+                { id: 'circle', icon: <CircleIcon size={14} />, label: t.circle || 'Circle' },
+                { id: 'rectangle', icon: <RectangleIcon />, label: t.rectangle || 'Rectangle' }
+              ].map((tool) => (
+                <button
+                  key={tool.id}
+                  onClick={() => setActiveTool(activeTool === tool.id ? null : tool.id as any)}
+                  className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
+                    activeTool === tool.id 
+                    ? 'bg-zinc-700 text-white' 
+                    : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+                  }`}
+                  title={tool.label}
+                >
+                  {tool.icon}
+                </button>
+              ))}
+            </div>
+
+            <div className="w-5 sm:w-6 h-[1px] bg-white/10 mx-1 shrink-0"></div>
+
+            <button 
+              onClick={() => setActiveTool(activeTool === 'ruler' ? null : 'ruler')}
+              className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
+                activeTool === 'ruler' 
+                ? 'bg-zinc-700 text-white' 
+                : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+              }`}
+            >
+              <Ruler size={14} className="sm:w-[16px] sm:h-[16px]" />
+            </button>
+
+            <button 
+              onClick={() => setMagnetEnabled(!magnetEnabled)}
+              className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
+                magnetEnabled 
+                ? 'bg-zinc-700 text-white' 
+                : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+              }`}
+            >
+              <Magnet size={14} className="sm:w-[16px] sm:h-[16px]" />
+            </button>
+
+            <div className="mt-auto flex flex-col items-center gap-2 w-full">
+              <div className="w-5 sm:w-6 h-[1px] bg-white/10 mx-1 shrink-0"></div>
+              <button 
+                onClick={handleClearAll}
+                className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all shrink-0 ${
+                  drawings.length > 0 
+                  ? 'text-gray-500 hover:bg-red-500/10 hover:text-red-400' 
+                  : 'text-gray-700 opacity-10 cursor-not-allowed'
                 }`}
               >
-                {lastLineTool === 'trendline' && <TrendLineIcon />}
-                {lastLineTool === 'ray' && <RayIcon />}
-                {lastLineTool === 'hline' && <HLineIcon />}
-                {lastLineTool === 'hray' && <HRayIcon />}
-                {lastLineTool === 'vline' && <VLineIcon />}
-                {lastLineTool === 'crossline' && <CrossLineIcon />}
-              </button>
-              
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setIsLineMenuOpen(!isLineMenuOpen);
-                }}
-                className={`w-3 h-6 sm:h-7 flex items-center justify-center rounded-r-md transition-all ${isLineMenuOpen ? 'text-white bg-purple-500/30' : 'text-gray-400 bg-white/5 hover:bg-white/10'}`}
-              >
-                <ChevronRight size={10} className={`transition-transform duration-200 ${isLineMenuOpen ? 'rotate-180' : ''}`} />
+                <Trash2 size={12} className="sm:w-[14px] sm:h-[14px]" />
               </button>
             </div>
           </div>
-
-          {/* Desktop Individual Line Tools */}
-          <div className="hidden md:flex flex-col gap-1.5 items-center">
-            {[
-              { id: 'trendline', icon: <TrendLineIcon />, label: t.trend_line || 'Trend Line' },
-              { id: 'ray', icon: <RayIcon />, label: t.ray || 'Ray' },
-              { id: 'hline', icon: <HLineIcon />, label: t.h_line || 'Horizontal Line' },
-              { id: 'hray', icon: <HRayIcon />, label: t.h_ray || 'Horizontal Ray' },
-              { id: 'vline', icon: <VLineIcon />, label: t.v_line || 'Vertical Line' },
-              { id: 'crossline', icon: <CrossLineIcon />, label: t.cross_line || 'Cross Line' },
-              { id: 'circle', icon: <CircleIcon size={14} />, label: t.circle || 'Circle' },
-              { id: 'rectangle', icon: <RectangleIcon />, label: t.rectangle || 'Rectangle' }
-            ].map((tool) => (
-              <button
-                key={tool.id}
-                onClick={() => setActiveTool(activeTool === tool.id ? null : tool.id as any)}
-                className={`w-7 h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
-                  activeTool === tool.id 
-                  ? 'bg-zinc-700 text-white' 
-                  : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
-                }`}
-                title={tool.label}
-              >
-                {tool.icon}
-              </button>
-            ))}
-          </div>
-
-          <div className="w-5 sm:w-6 h-[1px] bg-white/10 mx-1 shrink-0"></div>
-
-          <button 
-            onClick={() => setActiveTool(activeTool === 'ruler' ? null : 'ruler')}
-            className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
-              activeTool === 'ruler' 
-              ? 'bg-zinc-700 text-white' 
-              : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
-            }`}
-          >
-            <Ruler size={14} className="sm:w-[16px] sm:h-[16px]" />
-          </button>
-
-          <button 
-            onClick={() => setMagnetEnabled(!magnetEnabled)}
-            className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all group/btn relative shrink-0 ${
-              magnetEnabled 
-              ? 'bg-zinc-700 text-white' 
-              : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
-            }`}
-          >
-            <Magnet size={14} className="sm:w-[16px] sm:h-[16px]" />
-          </button>
-
-          <div className="mt-auto flex flex-col items-center gap-2 w-full">
-            <div className="w-5 sm:w-6 h-[1px] bg-white/10 mx-1 shrink-0"></div>
-            <button 
-              onClick={handleClearAll}
-              className={`w-6 h-6 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-all shrink-0 ${
-                drawings.length > 0 
-                ? 'text-gray-500 hover:bg-red-500/10 hover:text-red-400' 
-                : 'text-gray-700 opacity-10 cursor-not-allowed'
-              }`}
-            >
-              <Trash2 size={12} className="sm:w-[14px] sm:h-[14px]" />
-            </button>
-          </div>
-        </div>
+        )}
 
         <div className={`relative flex-1 ${isAdditional ? 'bg-transparent' : 'bg-[#020203]'}`}>
           {fetchError ? (

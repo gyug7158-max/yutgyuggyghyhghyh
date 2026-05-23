@@ -17,6 +17,7 @@ export const AIBookModal: React.FC<AIBookModalProps> = ({ coin, onClose, languag
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const isRequesting = React.useRef(false);
   const t = translations[language];
 
   useEffect(() => {
@@ -51,27 +52,50 @@ export const AIBookModal: React.FC<AIBookModalProps> = ({ coin, onClose, languag
     isTuned: false
   };
 
-  const fetchAnalysis = useCallback(async (isRetry = false) => {
+  const fetchAnalysis = useCallback(async (forceRefresh = false) => {
+    if (isRequesting.current) return;
+    
+    const cacheKey = `smarteye_ai_cache_${assetData.pair}_${language}`;
+    const cached = localStorage.getItem(cacheKey);
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+
+    if (cached && !forceRefresh) {
+      try {
+        const { data: cachedData, timestamp } = JSON.parse(cached);
+        if (Date.now() - timestamp < TWENTY_FOUR_HOURS) {
+          setData(cachedData);
+          setLoading(false);
+          return;
+        }
+      } catch (e) {
+        console.error('Cache parse error:', e);
+      }
+    }
+
     try {
+      isRequesting.current = true;
       setLoading(true);
       setError(null);
       const result = await AIService.analyzeAsset(assetData, language, 'gemini-3-flash-preview');
+      setData(result);
       
-      // If data is empty and we haven't retried yet, try one more time
-      if (!isRetry && (!result.why || result.why.length === 0)) {
-        console.log("AI data empty, retrying...");
-        const retryResult = await AIService.analyzeAsset(assetData, language, 'gemini-3-flash-preview');
-        setData(retryResult);
-      } else {
-        setData(result);
-      }
+      // Save to cache
+      localStorage.setItem(cacheKey, JSON.stringify({
+        data: result,
+        timestamp: Date.now()
+      }));
     } catch (err: any) {
       console.error('AI Error:', err);
-      setError(t.error_generation);
+      if (err.message === 'AI_QUOTA_EXCEEDED') {
+        setError(t.ai_quota_error);
+      } else {
+        setError(t.error_generation);
+      }
     } finally {
+      isRequesting.current = false;
       setLoading(false);
     }
-  }, [coin, language]);
+  }, [assetData.pair, language]);
 
   useEffect(() => {
     fetchAnalysis();
@@ -130,47 +154,76 @@ export const AIBookModal: React.FC<AIBookModalProps> = ({ coin, onClose, languag
             <div className="h-full flex flex-col items-center justify-center text-center gap-4 sm:gap-6">
               <Zap className="w-10 h-10 sm:w-12 sm:h-12 text-red-500" />
               <p className="text-[10px] sm:text-sm font-black text-red-400 uppercase tracking-widest">{error}</p>
-              <button onClick={() => fetchAnalysis()} className="px-6 sm:px-8 py-2.5 sm:py-3 bg-purple-500/10 border border-purple-500/30 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest hover:bg-purple-500/20 transition-all">
+              <button onClick={() => fetchAnalysis(true)} className="px-6 sm:px-8 py-2.5 sm:py-3 bg-purple-500/10 border border-purple-500/30 rounded-xl text-[9px] sm:text-[10px] font-black uppercase tracking-widest hover:bg-purple-500/20 transition-all">
                 {t.retry}
               </button>
             </div>
           ) : data && (
-            <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-700">
-              <div className="bg-purple-500/5 border border-purple-500/20 p-4 sm:p-8 rounded-2xl sm:rounded-3xl relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                <div className="relative z-10">
-                  <div className="flex items-center gap-2 mb-3 sm:mb-4">
-                    <span className="text-[9px] sm:text-[10px] text-white font-black uppercase tracking-widest">
-                      CoinMarketCap AI: {t.why_label}
-                    </span>
-                  </div>
-                  <div className="space-y-3 sm:space-y-4">
-                    {data?.why && data.why.length > 0 ? (
-                      data.why.map((w, i) => (
-                        <div key={i} className="flex items-start gap-2.5 sm:gap-3 bg-white/[0.02] p-2.5 sm:p-3 rounded-xl border border-white/5">
-                          <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-[9px] sm:text-[10px] font-bold text-purple-400 shrink-0 border border-purple-500/30">
-                            {i + 1}
+              <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-700">
+                {/* SOURCE 1: IN BRIEF */}
+                <div className="bg-purple-500/5 border border-purple-500/20 p-4 sm:p-8 rounded-2xl sm:rounded-3xl relative overflow-hidden group">
+                  <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-2 mb-3 sm:mb-4">
+                      <Zap size={16} className="text-purple-400" />
+                      <span className="text-[9px] sm:text-[10px] text-white font-black uppercase tracking-widest">
+                        CoinMarketCap: {t.in_brief_label}
+                      </span>
+                    </div>
+                    <div className="space-y-3 sm:space-y-4">
+                      {data?.brief && data.brief.length > 0 ? (
+                        data.brief.map((b, i) => (
+                          <div key={i} className="flex items-start gap-2.5 sm:gap-3 bg-white/[0.02] p-2.5 sm:p-3 rounded-xl border border-white/5">
+                            <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-[9px] sm:text-[10px] font-bold text-purple-400 shrink-0 border border-purple-500/30">
+                              {i + 1}
+                            </div>
+                            <span className="text-xs sm:text-sm text-zinc-300 font-medium leading-relaxed">{b}</span>
                           </div>
-                          <span className="text-xs sm:text-sm text-zinc-300 font-medium leading-relaxed">{w}</span>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="flex flex-col items-center gap-3 sm:gap-4 py-3 sm:py-4">
-                        <p className="text-[10px] sm:text-xs text-zinc-500 italic">No brief data found.</p>
-                        <button 
-                          onClick={() => fetchAnalysis()}
-                          className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-widest hover:bg-purple-500/20 transition-all"
-                        >
-                          <RotateCcw size={10} className="sm:w-3 sm:h-3 text-purple-400" />
-                          {t.retry}
-                        </button>
-                      </div>
-                    )}
+                        ))
+                      ) : (
+                        <p className="text-[10px] text-zinc-500 italic">No brief data extracted from main source.</p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* DATA GRID */}
+                {/* SOURCE 2: KEY FACTORS (CMC AI) */}
+                <div className="bg-purple-500/5 border border-purple-500/20 p-4 sm:p-8 rounded-2xl sm:rounded-3xl relative overflow-hidden group">
+                  <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-2 mb-3 sm:mb-4">
+                      <Zap size={16} className="text-purple-400" />
+                      <span className="text-[9px] sm:text-[10px] text-white font-black uppercase tracking-widest">
+                        CoinMarketCap AI: {t.why_label}
+                      </span>
+                    </div>
+                    <div className="space-y-3 sm:space-y-4">
+                      {data?.why && data.why.length > 0 ? (
+                        data.why.map((w, i) => (
+                          <div key={i} className="flex items-start gap-2.5 sm:gap-3 bg-white/[0.02] p-2.5 sm:p-3 rounded-xl border border-white/5">
+                            <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-[9px] sm:text-[10px] font-bold text-purple-400 shrink-0 border border-purple-500/30">
+                              {i + 1}
+                            </div>
+                            <span className="text-xs sm:text-sm text-zinc-300 font-medium leading-relaxed">{w}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex flex-col items-center gap-3 sm:gap-4 py-3 sm:py-4">
+                          <p className="text-[10px] sm:text-xs text-zinc-500 italic">No AI insights found.</p>
+                          <button 
+                            onClick={() => fetchAnalysis(true)}
+                            className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg text-[9px] sm:text-[10px] font-black uppercase tracking-widest hover:bg-purple-500/20 transition-all"
+                          >
+                            <RotateCcw size={10} className="sm:w-3 sm:h-3 text-purple-400" />
+                            {t.retry}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* DATA GRID */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 sm:gap-3">
                 {data?.metrics && Object.entries(data.metrics)
                   .filter(([key]) => !['protocol', 'news', 'protocolTitle'].includes(key))

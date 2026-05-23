@@ -10,11 +10,13 @@ import { ChartBlock } from './ChartBlock';
 
 const MemoTable = React.memo(Table);
 const MemoMarketScreener = React.memo(MarketScreener);
+import { MiniChart } from './UI/MiniChart';
 import { RowData, SettingsState, ExchangeSelection, MarketType, ExchangeConfig, STORAGE_PREFIX, DEFAULT_SETTINGS, getConfigsForMarket, DBUser } from '../models';
 import { SmarteyeEngineService, CONFIG } from '../services/smarteye-engine.service';
-import { User, Settings, ChevronDown, LayoutGrid, Check, Globe, RotateCcw, Star, Loader2, ChevronUp, BrainCircuit, ArrowUp, ArrowDown, BarChart2, Rewind, X, Maximize, Minimize, LogOut, Volume2 } from 'lucide-react';
+import { User, Settings, ChevronDown, LayoutGrid, Check, Globe, TrendingUp, RotateCcw, Star, Loader2, ChevronUp, BrainCircuit, ArrowUp, ArrowDown, BarChart2, Rewind, X, Maximize, Minimize, LogOut, Volume2, Info, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { Logo } from './UI/Icons';
 import { Language, translations } from '../src/translations';
+import { Link } from 'react-router-dom';
 import { MarketSidebar } from './MarketSidebar';
 import { SubscriptionAvatar } from './UI/SubscriptionAvatar';
 import { SubscriptionPrompt } from './UI/SubscriptionPrompt';
@@ -25,6 +27,17 @@ import { LanguageSwitcher } from '../src/components/UI/LanguageSwitcher';
 
 import confetti from 'canvas-confetti';
 
+const DEFAULT_COIN: MarketCoin = {
+  symbol: 'BTCUSDT',
+  baseAsset: 'BTC',
+  price: 0,
+  change24h: 0,
+  volume24h: 0,
+  market: 'FUTURES',
+  exchange: 'Binance',
+  logo: '/api/logos/BTC'
+};
+
 const isDensityExcluded = (symbol: string, exchange: string, marketType: string) => {
   const baseAsset = symbol.replace('USDT', '');
   const isBinance = exchange.includes('Binance');
@@ -33,14 +46,14 @@ const isDensityExcluded = (symbol: string, exchange: string, marketType: string)
   const isSpot = marketType === 'SPOT';
 
   if (isBinance) {
-    const allExcl = ['NEAR', 'AVAX', 'BCH', 'TAO', 'SHIB', 'RENDER', 'OP', 'FIL', 'INJ', 'AXS', 'LTC', 'SUI', 'POL'];
+    const allExcl = ['NEAR', 'AVAX', 'BCH', 'TAO', 'SHIB', 'RENDER', 'OP', 'FIL', 'INJ', 'AXS', 'LTC', 'SUI', 'POL', 'AAVE'];
     if (allExcl.includes(baseAsset)) return true;
     if (isFutures && baseAsset === 'ONDO') return true;
     if (isSpot && (baseAsset === 'ICP' || baseAsset === 'PENDLE')) return true;
   }
   
   if (isBybit) {
-    const allExcl = ['NEAR', 'STX', 'STRK', 'PEPE'];
+    const allExcl = ['NEAR', 'STX', 'STRK', 'PEPE', 'AAVE'];
     if (allExcl.includes(baseAsset)) return true;
     const futExcl = ['AVAX', 'BCH', 'LTC', 'GALA', 'ENA', 'ONDO', 'SUI', '1000BONK', '1000FLOKI', 'SEI'];
     if (isFutures && futExcl.includes(baseAsset)) return true;
@@ -51,23 +64,216 @@ const isDensityExcluded = (symbol: string, exchange: string, marketType: string)
   return false;
 };
 
+const getDrawingKey = (coin: MarketCoin | null) => {
+  if (!coin) return '';
+  return `${coin.exchange}:${coin.market}:${coin.symbol}`;
+};
+
 const Dashboard: React.FC<{ 
   onNavigateToProfile: (tab?: string, plan?: string) => void;
   onLogout: () => void;
   language: Language;
   setLanguage: React.Dispatch<React.SetStateAction<Language>>;
   engine: SmarteyeEngineService;
-  avatarTier: 'free' | '1month' | '3months' | '1year';
+  avatarTier: 'free' | '1month' | '6months' | '1year';
   subscriptionTier: 'free' | 'pro' | 'whale';
   dbUser: DBUser | null;
-  activeTab: 'screener' | 'market';
-  setActiveTab: (tab: 'screener' | 'market') => void;
+  activeTab: 'screener' | 'market' | 'top_movers';
+  setActiveTab: (tab: 'screener' | 'market' | 'top_movers') => void;
   refreshUser: () => Promise<void>;
   onAuthRequired?: () => void;
   showToast?: (message: string, type: any) => void;
-}> = ({ onNavigateToProfile, onLogout, language, setLanguage, engine, avatarTier, subscriptionTier, dbUser, activeTab, setActiveTab, refreshUser, onAuthRequired, showToast }) => {
+  isAuthModalOpen?: boolean;
+}> = ({ onNavigateToProfile, onLogout, language, setLanguage, engine, avatarTier, subscriptionTier, dbUser, activeTab, setActiveTab, refreshUser, onAuthRequired, showToast, isAuthModalOpen }) => {
   const t = translations[language];
   const isInitializing = useRef(true);
+
+  // Dedicated component for individual Top Mover cards to manage their own timeframe state
+  const TopMoverCard = useMemo(() => {
+    return ({ coin, onSelect }: { coin: MarketCoin, onSelect: (c: MarketCoin) => void }) => {
+      const [timeframe, setTimeframe] = useState('5m');
+      const [isHovered, setIsHovered] = useState(false);
+      
+      const timeframes = [
+        { label: '1m', value: '1m' },
+        { label: language === 'ru' ? '5м' : '5m', value: '5m' },
+        { label: language === 'ru' ? '15м' : '15m', value: '15m' },
+        { label: language === 'ru' ? '1ч' : '1h', value: '1h' },
+        { label: language === 'ru' ? '4ч' : '4h', value: '4h' },
+        { label: language === 'ru' ? '1д' : '1d', value: '1d' }
+      ];
+
+      return (
+        <div 
+          className="bg-[#0a0a0a] border border-white/5 rounded-xl overflow-hidden flex flex-col group hover:border-purple-500/30 transition-all duration-300 h-full relative"
+          onMouseEnter={() => setIsHovered(true)}
+          onMouseLeave={() => setIsHovered(false)}
+        >
+          {/* Floating Timeframe Selector on Hover */}
+          <div className={`absolute top-10 left-1/2 -translate-x-1/2 z-[100] transition-all duration-300 pointer-events-none ${isHovered ? 'opacity-100 translate-y-0 translate-x-[-50%] scale-100' : 'opacity-0 -translate-y-2 translate-x-[-50%] scale-95'}`}>
+            <div className="flex items-center bg-[#151515]/90 backdrop-blur-xl border border-white/10 p-0.5 rounded-lg shadow-2xl pointer-events-auto">
+              {timeframes.map((tf) => (
+                <button
+                  key={tf.value}
+                  onClick={() => setTimeframe(tf.value)}
+                  className={`px-2 py-1 text-[9px] font-black uppercase rounded-md transition-all ${
+                    timeframe === tf.value 
+                    ? 'bg-purple-500/20 text-purple-400 shadow-[0_0_10px_rgba(168,85,247,0.2)]' 
+                    : 'text-white/40 hover:text-white/60 hover:bg-white/5'
+                  }`}
+                >
+                  {tf.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between px-2 py-0.5 bg-[#0d0d0d] border-b border-white/5 shrink-0 z-10">
+            <div className="flex items-center gap-1.5">
+              <div className="w-3.5 h-3.5 rounded-full border border-white/10 flex items-center justify-center bg-black p-0.5 overflow-hidden">
+                <img src={`/api/logos/${coin.baseAsset.toUpperCase()}`} className="w-full h-full object-contain" alt="" />
+              </div>
+              <span className="text-[9px] font-black uppercase tracking-widest text-white/80">{coin.baseAsset}</span>
+              <span className={`text-[9px] font-black font-mono ${coin.change24h >= 0 ? 'text-[#00ff88]' : 'text-[#ff3355]'}`}>
+                {coin.change24h >= 0 ? '+' : ''}{coin.change24h.toFixed(2)}%
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[8px] font-black text-white/30 uppercase tracking-tighter">{coin.exchange}</span>
+              <button 
+                onClick={() => onSelect(coin)}
+                className="p-1 hover:bg-white/10 rounded transition-colors group/btn"
+              >
+                <Maximize size={9} className="text-gray-500 group-hover/btn:text-white transition-colors" />
+              </button>
+            </div>
+          </div>
+          
+          <div className="flex-1 relative overflow-hidden">
+            <MiniChart 
+              symbol={coin.symbol}
+              exchange={coin.exchange}
+              marketType={coin.market}
+              timeframe={timeframe}
+              isLong={coin.change24h >= 0}
+              price={coin.price}
+              activeTool={null}
+              drawings={[]}
+              onDrawingsChange={() => {}}
+              magnetEnabled={false}
+              isReplayMode={false}
+              isPlaying={false}
+              replaySpeed={1000}
+              onHistoryChange={() => {}}
+              hideToolbar={true}
+            />
+          </div>
+        </div>
+      );
+    };
+  }, [language]);
+
+  // New component for Top Movers inside Dashboard to have access to types and translations
+  const TopMoversView = useMemo(() => {
+    return ({ data, onSelectCoin }: { data: MarketCoin[], onSelectCoin: (c: MarketCoin) => void }) => {
+      const [currentPage, setCurrentPage] = useState(1);
+      const itemsPerPage = 9;
+
+      const movers = [...data]
+        .filter(c => c.exchange === 'Bybit')
+        .sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
+
+      const totalPages = Math.ceil(movers.length / itemsPerPage);
+      const currentMovers = movers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+      if (movers.length === 0) {
+        return (
+          <div className="flex-1 flex items-center justify-center text-white/20 uppercase font-black tracking-widest text-sm">
+            <Loader2 className="animate-spin mr-2" />
+            {language === 'ru' ? 'Загрузка активов Bybit...' : 'Loading Bybit assets...'}
+          </div>
+        );
+      }
+
+      const goToPage = (p: number) => {
+        setCurrentPage(Math.max(1, Math.min(totalPages, p)));
+      };
+
+      return (
+        <div className="flex flex-col h-full w-full relative overflow-hidden bg-black">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 grid-rows-[repeat(9,minmax(0,1fr))] md:grid-rows-[repeat(5,minmax(0,1fr))] lg:grid-rows-[repeat(3,minmax(0,1fr))] gap-[1px] p-0 flex-1 h-full w-full overflow-hidden">
+            {currentMovers.map((coin, idx) => (
+              <TopMoverCard 
+                key={`${coin.exchange}-${coin.symbol}-${idx}`} 
+                coin={coin} 
+                onSelect={onSelectCoin} 
+              />
+            ))}
+          </div>
+
+          {/* Pagination UI - Absolute Bottom Right Corner */}
+          <div className="absolute bottom-0.5 right-0.5 z-[1000] hidden md:block">
+            <div className="flex items-center bg-[#0d0d0d]/95 backdrop-blur-2xl border border-white/10 p-1 rounded-lg shadow-[0_0_40px_rgba(0,0,0,0.8)] gap-0.5 scale-90 origin-bottom-right">
+              <button 
+                onClick={() => goToPage(1)}
+                disabled={currentPage === 1}
+                className="p-2 text-white/30 hover:text-white disabled:opacity-5 disabled:cursor-not-allowed transition-all hover:bg-white/5 rounded-lg"
+              >
+                <ChevronsLeft size={16} strokeWidth={2.5} />
+              </button>
+              <button 
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="p-2 text-white/30 hover:text-white disabled:opacity-5 disabled:cursor-not-allowed transition-all hover:bg-white/5 rounded-lg"
+              >
+                <ChevronLeft size={16} strokeWidth={2.5} />
+              </button>
+              
+              <div className="px-5 flex items-center gap-1.5">
+                <span className="text-[14px] font-black font-mono text-white tracking-widest">{currentPage}</span>
+                <span className="text-[14px] font-black text-white/10">/</span>
+                <span className="text-[14px] font-black font-mono text-white/40 tracking-widest">{totalPages}</span>
+              </div>
+
+              <button 
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="p-2 text-white/30 hover:text-white disabled:opacity-5 disabled:cursor-not-allowed transition-all hover:bg-white/5 rounded-lg"
+              >
+                <ChevronRight size={16} strokeWidth={2.5} />
+              </button>
+              <button 
+                onClick={() => goToPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="p-2 text-white/30 hover:text-white disabled:opacity-5 disabled:cursor-not-allowed transition-all hover:bg-white/5 rounded-lg"
+              >
+                <ChevronsRight size={16} strokeWidth={2.5} />
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile Pagination */}
+          <div className="md:hidden flex items-center justify-center gap-4 py-4 bg-[#0a0a0a] border-t border-white/5">
+              <button 
+                onClick={() => goToPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="p-2 text-white/40 disabled:opacity-10"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <span className="text-xs font-black text-white">{currentPage} / {totalPages}</span>
+              <button 
+                onClick={() => goToPage(currentPage + 1)}
+                disabled={currentPage === totalPages}
+                className="p-2 text-white/40 disabled:opacity-10"
+              >
+                <ChevronRight size={20} />
+              </button>
+          </div>
+        </div>
+      );
+    };
+  }, [language, TopMoverCard]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -87,11 +293,15 @@ const Dashboard: React.FC<{
       const saved = localStorage.getItem('smarteye_activeCoin');
       if (saved) {
         try {
-          return JSON.parse(saved);
-        } catch (e) { return null; }
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.baseAsset === 'BTC' && (parsed.market === 'SPOT' || parsed.exchange === 'Bybit')) {
+            return DEFAULT_COIN;
+          }
+          return parsed;
+        } catch (e) { return DEFAULT_COIN; }
       }
     }
-    return null;
+    return DEFAULT_COIN;
   });
   const [timeframe, setTimeframe] = useState(() => {
     if (typeof localStorage !== 'undefined') {
@@ -109,6 +319,18 @@ const Dashboard: React.FC<{
   const [showExtraTf, setShowExtraTf] = useState(false);
   const [priceFlash, setPriceFlash] = useState(false);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
+
+  const [spotSettings, setSpotSettings] = useState<SettingsState>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_PREFIX + 'spot') : null;
+    const parsed = saved ? JSON.parse(saved) : {};
+    return { ...DEFAULT_SETTINGS, ...parsed };
+  });
+  const [futuresSettings, setFuturesSettings] = useState<SettingsState>(() => {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_PREFIX + 'futures') : null;
+    const parsed = saved ? JSON.parse(saved) : {};
+    return { ...DEFAULT_SETTINGS, ...parsed };
+  });
+
   const [chartLayout, setChartLayout] = useState(() => {
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem('smarteye_chartLayout');
@@ -135,7 +357,11 @@ const Dashboard: React.FC<{
   const [drawings, setDrawings] = useState<Record<string, any[]>>(() => {
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem('smarteye_drawings');
-      return saved ? JSON.parse(saved) : {};
+      const parsed = saved ? JSON.parse(saved) : {};
+      
+      // Migration: check if any keys are just symbols and update them if it's the current preview coin
+      // However, it's safer to just start using the new key.
+      return parsed;
     }
     return {};
   });
@@ -153,6 +379,94 @@ const Dashboard: React.FC<{
     }
     return { 'SPOT': true, 'FUTURES': true };
   });
+
+  const [marketCoins, setMarketCoins] = useState<MarketCoin[]>([]);
+  const fetchMarketCoinsRef = useRef(false);
+
+  useEffect(() => {
+    const fetchMarketData = async () => {
+      if (fetchMarketCoinsRef.current) return;
+      fetchMarketCoinsRef.current = true;
+      try {
+        const fetchDirectProxy = async (proxyUrl: string) => {
+          const res = await fetch(proxyUrl);
+          if (!res.ok) throw new Error(`Proxy status ${res.status}`);
+          return await res.json();
+        };
+
+        const results = await Promise.allSettled([
+          fetchDirectProxy('/api/tickers/binance/spot'),
+          fetchDirectProxy('/api/tickers/binance/futures'),
+          fetchDirectProxy('/api/tickers/bybit/spot'),
+          fetchDirectProxy('/api/tickers/bybit/linear'),
+        ]);
+
+        const globEx = ['AGIX', 'ALPACA', 'ALPHA', 'LEVER', 'LINA', 'MEMEFI', 'PORT3', 'SXP', 'USD1', 'UXLINK', 'VID'];
+        const isExcluded = (base: string) => globEx.includes(base.toUpperCase());
+
+        let all: MarketCoin[] = [];
+        
+        if (results[0].status === 'fulfilled' && Array.isArray(results[0].value)) {
+          results[0].value.forEach((t: any) => {
+            if (t.symbol.endsWith('USDT')) {
+              const base = t.symbol.replace('USDT', '');
+              if (!isExcluded(base)) all.push({
+                symbol: t.symbol, baseAsset: base, price: parseFloat(t.lastPrice),
+                change24h: parseFloat(t.priceChangePercent), volume24h: parseFloat(t.quoteVolume),
+                market: 'SPOT', exchange: 'Binance', logo: `/api/logos/${base.toUpperCase()}`
+              });
+            }
+          });
+        }
+        if (results[1].status === 'fulfilled' && Array.isArray(results[1].value)) {
+          results[1].value.forEach((t: any) => {
+            if (t.symbol.endsWith('USDT')) {
+              const base = t.symbol.replace('USDT', '');
+              if (!isExcluded(base)) all.push({
+                symbol: t.symbol, baseAsset: base, price: parseFloat(t.lastPrice),
+                change24h: parseFloat(t.priceChangePercent), volume24h: parseFloat(t.quoteVolume),
+                market: 'FUTURES', exchange: 'Binance', logo: `/api/logos/${base.toUpperCase()}`
+              });
+            }
+          });
+        }
+        if (results[2].status === 'fulfilled' && results[2].value?.result?.list && Array.isArray(results[2].value.result.list)) {
+          results[2].value.result.list.forEach((t: any) => {
+            if (t.symbol.endsWith('USDT')) {
+              const base = t.symbol.replace('USDT', '');
+              if (!isExcluded(base)) all.push({
+                symbol: t.symbol, baseAsset: base, price: parseFloat(t.lastPrice),
+                change24h: parseFloat(t.price24hPcnt) * 100, volume24h: parseFloat(t.turnover24h),
+                market: 'SPOT', exchange: 'Bybit', logo: `/api/logos/${base.toUpperCase()}`
+              });
+            }
+          });
+        }
+        if (results[3].status === 'fulfilled' && results[3].value?.result?.list && Array.isArray(results[3].value.result.list)) {
+          results[3].value.result.list.forEach((t: any) => {
+            if (t.symbol.endsWith('USDT')) {
+              const base = t.symbol.replace('USDT', '');
+              if (!isExcluded(base)) all.push({
+                symbol: t.symbol, baseAsset: base, price: parseFloat(t.lastPrice),
+                change24h: parseFloat(t.price24hPcnt) * 100, volume24h: parseFloat(t.turnover24h),
+                market: 'FUTURES', exchange: 'Bybit', logo: `/api/logos/${base.toUpperCase()}`
+              });
+            }
+          });
+        }
+
+        if (all.length > 0) setMarketCoins(all);
+      } catch (e) {
+        console.error('Failed to fetch market data logic', e);
+      } finally {
+        fetchMarketCoinsRef.current = false;
+      }
+    };
+
+    fetchMarketData();
+    const interval = setInterval(fetchMarketData, 5000);
+    return () => clearInterval(interval);
+  }, []);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
     if (typeof localStorage !== 'undefined') {
       return (localStorage.getItem('smarteye_viewMode') as 'list' | 'grid') || 'list';
@@ -168,13 +482,55 @@ const Dashboard: React.FC<{
   });
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false);
 
+  const [connectionStatus, setConnectionStatus] = useState<'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED'>('DISCONNECTED');
+
   const filteredLongData = useMemo(() => 
-    longData.filter(d => !isDensityExcluded(d.pair, d.exchange || '', d.marketType || 'SPOT')),
-  [longData]);
+    longData.filter(d => {
+      const isExcluded = isDensityExcluded(d.pair, d.exchange || '', d.marketType || 'SPOT');
+      if (isExcluded) return false;
+      
+      // Apply UI-side filtering based on settings
+      const settings = d.marketType === 'SPOT' ? spotSettings : futuresSettings;
+      
+      const currentVol = Number(d.rawVolume || 0);
+      const minDensityVol = Number(settings.minDensityVolume) || 40000;
+      if (currentVol < minDensityVol) return false;
+      
+      const distPct = Math.abs(Number(d.percentage) || 0);
+      const maxDistPct = Number(settings.distancePercentage) || 2.0;
+      if (distPct > maxDistPct) return false;
+
+      const relDensity = Number(d.relDensity || 0);
+      const minRelDensity = Number(settings.peerMultiplier) || 2.5;
+      if (relDensity < minRelDensity) return false;
+      
+      return true;
+    }),
+  [longData, spotSettings, futuresSettings]);
 
   const filteredShortData = useMemo(() => 
-    shortData.filter(d => !isDensityExcluded(d.pair, d.exchange || '', d.marketType || 'SPOT')),
-  [shortData]);
+    shortData.filter(d => {
+      const isExcluded = isDensityExcluded(d.pair, d.exchange || '', d.marketType || 'SPOT');
+      if (isExcluded) return false;
+      
+      // Apply UI-side filtering based on settings
+      const settings = d.marketType === 'SPOT' ? spotSettings : futuresSettings;
+      
+      const currentVol = Number(d.rawVolume || 0);
+      const minDensityVol = Number(settings.minDensityVolume) || 40000;
+      if (currentVol < minDensityVol) return false;
+      
+      const distPct = Math.abs(Number(d.percentage) || 0);
+      const maxDistPct = Number(settings.distancePercentage) || 2.0;
+      if (distPct > maxDistPct) return false;
+
+      const relDensity = Number(d.relDensity || 0);
+      const minRelDensity = Number(settings.peerMultiplier) || 2.5;
+      if (relDensity < minRelDensity) return false;
+      
+      return true;
+    }),
+  [shortData, spotSettings, futuresSettings]);
 
   const [selectedExchanges, setSelectedExchanges] = useState<ExchangeSelection>(() => {
     if (typeof localStorage !== 'undefined') {
@@ -195,43 +551,48 @@ const Dashboard: React.FC<{
   useEffect(() => {
     if (dbUser && (dbUser.subscription_tier === 'free' || !dbUser.subscription_tier)) {
       const now = Date.now();
-      const createdAt = new Date(dbUser.created_at).getTime();
-      const trialDuration = 60 * 1000; // 1 minute
+      const createdAt = new Date(dbUser.created_at || now).getTime();
+      const trialDuration = 2 * 24 * 60 * 60 * 1000; // 2 days
       const elapsed = now - createdAt;
 
       if (elapsed < trialDuration) {
         const remaining = Math.ceil((trialDuration - elapsed) / 1000);
-        setTrialTimeLeft(remaining);
-        if (!trialStartedRef.current) {
+        if (trialTimeLeft === null) setTrialTimeLeft(remaining);
+        
+        // Show trial notification only once after registration
+        const justRegistered = localStorage.getItem('se_just_registered') === 'true';
+        if (!trialStartedRef.current && justRegistered) {
           setShowTrialNotification(true);
-          setTimeout(() => setShowTrialNotification(false), 5000);
-          showToast?.(language === 'ru' ? 'Вам предоставлен пробный период 1 минута' : 'You have been granted a 1-minute trial period', 'info');
-          trialStartedRef.current = true;
+          setTimeout(() => setShowTrialNotification(false), 8000);
+          showToast?.(language === 'ru' ? 'Вам предоставлен пробный период 2 дня' : 'You have been granted a 2-day trial period', 'info');
+          localStorage.removeItem('se_just_registered');
         }
+        trialStartedRef.current = true;
       } else {
         setTrialTimeLeft(0);
+        trialStartedRef.current = true;
       }
     } else {
       setTrialTimeLeft(null);
       trialStartedRef.current = false;
     }
-  }, [dbUser, language, showToast]);
+  }, [dbUser, language, showToast, trialTimeLeft]);
 
   useEffect(() => {
     if (trialTimeLeft !== null && trialTimeLeft > 0 && dbUser) {
       const timer = setInterval(() => {
         setTrialTimeLeft(prev => {
-          if (prev && prev <= 1) {
+          if (prev !== null && prev <= 1) {
             clearInterval(timer);
             showToast?.(language === 'ru' ? 'Пробный период окончен. Оформите подписку для продолжения.' : 'Trial period ended. Please subscribe to continue.', 'info');
             return 0;
           }
-          return prev ? prev - 1 : 0;
+          return prev !== null ? prev - 1 : 0;
         });
       }, 1000);
       return () => clearInterval(timer);
     }
-  }, [trialTimeLeft, dbUser, language, showToast]);
+  }, [dbUser]); // Interval only depends on user existence, doesn't restart every second
 
   const isRestricted = useMemo(() => {
     if (!dbUser) return false;
@@ -239,6 +600,8 @@ const Dashboard: React.FC<{
     if (trialTimeLeft !== null && trialTimeLeft > 0) return false;
     return dbUser.subscription_tier === 'free' || !dbUser.subscription_tier;
   }, [dbUser, trialTimeLeft]);
+
+  const lastSavedSettingsRef = useRef<string>('');
 
   const checkAuth = useCallback(() => {
     if (!dbUser) {
@@ -282,17 +645,6 @@ const Dashboard: React.FC<{
     return true;
   };
 
-  const [spotSettings, setSpotSettings] = useState<SettingsState>(() => {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_PREFIX + 'spot') : null;
-    const parsed = saved ? JSON.parse(saved) : {};
-    return { ...DEFAULT_SETTINGS, ...parsed };
-  });
-  const [futuresSettings, setFuturesSettings] = useState<SettingsState>(() => {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_PREFIX + 'futures') : null;
-    const parsed = saved ? JSON.parse(saved) : {};
-    return { ...DEFAULT_SETTINGS, ...parsed };
-  });
-
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastDensityIds = useRef<Set<string>>(new Set());
 
@@ -315,14 +667,14 @@ const Dashboard: React.FC<{
   useEffect(() => {
     if (isInitializing.current) return;
 
-    const allDensities = [...longData, ...shortData];
+    const allDensities = [...filteredLongData, ...filteredShortData];
     let shouldPlay = false;
     let playVolume = 0.5;
 
     for (const d of allDensities) {
       if (!lastDensityIds.current.has(d.id)) {
         // New density detected
-        const marketType = d.market as MarketType;
+        const marketType = d.marketType as MarketType;
         const settings = marketType === 'SPOT' ? spotSettings : futuresSettings;
         if (settings.soundAlertEnabled) {
           shouldPlay = true;
@@ -386,11 +738,16 @@ const Dashboard: React.FC<{
         if (settings.futuresSettings) setFuturesSettings({ ...DEFAULT_SETTINGS, ...settings.futuresSettings });
         
         if (settings.activeCoin) {
-          setPreviewCoin(settings.activeCoin);
+          // Force BTC to Futures Binance if it's currently Spot or Bybit during initialization
+          let coinToSet = settings.activeCoin;
+          if (coinToSet.baseAsset === 'BTC' && (coinToSet.market === 'SPOT' || coinToSet.exchange === 'Bybit')) {
+            coinToSet = DEFAULT_COIN;
+          }
+          setPreviewCoin(coinToSet);
         } else {
-          // If no active coin in DB (new user), clear preview coin so screener picks the top one
-          setPreviewCoin(null);
-          localStorage.removeItem('smarteye_activeCoin');
+          // If no active coin in DB (new user), set to BTC Futures
+          setPreviewCoin(DEFAULT_COIN);
+          localStorage.setItem('smarteye_activeCoin', JSON.stringify(DEFAULT_COIN));
         }
 
         if (settings.timeframe) setTimeframe(settings.timeframe);
@@ -403,34 +760,81 @@ const Dashboard: React.FC<{
         if (settings.comparisonCoins) setComparisonCoins(settings.comparisonCoins);
         if (settings.chartLayout) setChartLayout(settings.chartLayout);
         if (settings.selectedExchanges) setSelectedExchanges(settings.selectedExchanges);
+
+        // Update ref to prevent immediate re-save of loaded data
+        lastSavedSettingsRef.current = JSON.stringify({
+          favorites: settings.favorites || favorites,
+          activeCoin: settings.activeCoin || previewCoin,
+          timeframe: settings.timeframe || timeframe,
+          drawings: settings.drawings || drawings,
+          activeExchanges: settings.activeExchanges || activeExchanges,
+          activeTypes: settings.activeTypes || activeTypes,
+          viewMode: settings.viewMode || viewMode,
+          sortConfig: settings.sortConfig || sortConfig,
+          spotSettings: settings.spotSettings ? { ...DEFAULT_SETTINGS, ...settings.spotSettings } : spotSettings,
+          futuresSettings: settings.futuresSettings ? { ...DEFAULT_SETTINGS, ...settings.futuresSettings } : futuresSettings
+        });
       } else {
         // No settings at all (fresh registration)
-        setPreviewCoin(null);
-        localStorage.removeItem('smarteye_activeCoin');
+        setPreviewCoin(DEFAULT_COIN);
+        localStorage.setItem('smarteye_activeCoin', JSON.stringify(DEFAULT_COIN));
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
     }
   };
 
+  // Helper to save settings with debounce
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const saveCurrentSettings = async (updates: Partial<SettingsState>) => {
-    if (!dbUser) return;
-    try {
-      const current = await apiService.getSettings(dbUser.id) || DEFAULT_SETTINGS;
-      await apiService.saveSettings(dbUser.id, { ...current, ...updates });
-    } catch (error) {
-      console.error('Failed to save settings:', error);
-    }
+    if (!isSettingsLoaded) return;
+
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+    saveTimeoutRef.current = setTimeout(async () => {
+      // Use current component state as the source of truth for ALL settings.
+      const fullSettings: SettingsState = {
+        ...DEFAULT_SETTINGS,
+        favorites,
+        activeCoin: previewCoin,
+        timeframe,
+        drawings,
+        activeExchanges,
+        activeTypes,
+        viewMode,
+        sortConfig,
+        spotSettings,
+        futuresSettings,
+        comparisonCoins,
+        chartLayout,
+        selectedExchanges,
+        ...updates // Overlay the specific updates
+      };
+
+      const settingsString = JSON.stringify(fullSettings);
+      if (settingsString === lastSavedSettingsRef.current) return;
+      lastSavedSettingsRef.current = settingsString;
+
+      if (dbUser) {
+        try {
+          await apiService.saveSettings(dbUser.id, fullSettings);
+        } catch (error) {
+          console.error('Failed to save settings:', error);
+        }
+      } else {
+        localStorage.setItem(STORAGE_PREFIX + 'settings', settingsString);
+      }
+    }, 1000);
   };
 
   // Auto-save favorites
   useEffect(() => {
     if (!isSettingsLoaded) return;
-    if (dbUser && favorites.length > 0) {
+    if (dbUser) {
       saveCurrentSettings({ favorites });
-    } else {
-      localStorage.setItem('smarteye_favorites', JSON.stringify(favorites));
     }
+    localStorage.setItem('smarteye_favorites', JSON.stringify(favorites));
   }, [favorites, dbUser, isSettingsLoaded]);
 
   // Auto-save active coin and timeframe
@@ -470,9 +874,9 @@ const Dashboard: React.FC<{
     }
   }, [activeExchanges, activeTypes, viewMode, sortConfig, comparisonCoins, chartLayout, selectedExchanges, dbUser, isSettingsLoaded]);
 
-  const onDrawingsChange = (symbol: string, symbolDrawings: any[]) => {
+  const onDrawingsChange = (key: string, symbolDrawings: any[]) => {
     setDrawings(prev => {
-      const next = { ...prev, [symbol]: symbolDrawings };
+      const next = { ...prev, [key]: symbolDrawings };
       if (dbUser) {
         saveCurrentSettings({ drawings: next });
       } else {
@@ -545,10 +949,6 @@ const Dashboard: React.FC<{
   ];
 
   useEffect(() => {
-    localStorage.setItem('smarteye_favorites', JSON.stringify(favorites));
-  }, [favorites]);
-
-  useEffect(() => {
     if (previewCoin) {
       setPriceFlash(true);
       const timer = setTimeout(() => setPriceFlash(false), 300);
@@ -574,15 +974,52 @@ const Dashboard: React.FC<{
   const [aiBookCoin, setAiBookCoin] = useState<any>(null);
   const [isAiBookOpen, setIsAiBookOpen] = useState(false);
   const [isMobileSettingsOpen, setIsMobileSettingsOpen] = useState(false);
+  const [isNavVisible, setIsNavVisible] = useState(true);
+  const navTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const exchangeDropdownRef = useRef<HTMLDivElement>(null);
+
+  const resetNavTimeout = useCallback(() => {
+    if (!isPortrait) {
+      setIsNavVisible(true);
+      if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
+      navTimeoutRef.current = setTimeout(() => {
+        setIsNavVisible(false);
+      }, 3000); // 3 seconds of idle to hide
+    } else {
+      setIsNavVisible(true);
+    }
+  }, [isPortrait]);
+
+  useEffect(() => {
+    if (!isPortrait) {
+      resetNavTimeout();
+    } else {
+      setIsNavVisible(true);
+    }
+  }, [isPortrait, resetNavTimeout]);
 
   // Scroll to top on tab change
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const screenerListRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0;
+    if (activeTab === 'screener' && screenerListRef.current) {
+      screenerListRef.current.scrollTop = 0;
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    const handleActivity = () => resetNavTimeout();
+    window.addEventListener('touchstart', handleActivity);
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('scroll', handleActivity);
+    
+    return () => {
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+    };
+  }, [resetNavTimeout]);
 
   const spotSettingsRef = useRef(spotSettings);
   const futuresSettingsRef = useRef(futuresSettings);
@@ -608,26 +1045,25 @@ const Dashboard: React.FC<{
   useEffect(() => {
     const fetchRanks = async () => {
       try {
-        const response = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false');
-        if (response.ok) {
-          const data = await response.json();
-          const mapping: Record<string, number> = {};
-          data.forEach((coin: any) => {
-            mapping[coin.symbol.toUpperCase()] = coin.market_cap_rank;
-          });
+        const mapping = await apiService.getRanks();
+        if (mapping && Object.keys(mapping).length > 0) {
           setRankMap(mapping);
           engine.setRankMap(mapping);
         }
       } catch (error) {
-        console.error('Error fetching ranks:', error);
+        console.error('Error fetching ranks from backend:', error);
       }
     };
     fetchRanks();
+    // Refresh ranks every hour
+    const interval = setInterval(fetchRanks, 60 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [engine]);
 
   useEffect(() => {
     const subL = engine.longs$.subscribe(setLongData);
     const subS = engine.shorts$.subscribe(setShortData);
+    const subStatus = engine.connectionStatus$.subscribe(setConnectionStatus);
     engine.startPipeline(CONFIG.engineTickMs, (t) => t === 'SPOT' ? spotSettingsRef.current : futuresSettingsRef.current);
     
     const handleClickOutside = (event: MouseEvent) => {
@@ -646,7 +1082,7 @@ const Dashboard: React.FC<{
     window.addEventListener('resize', handleResize);
 
     return () => { 
-      subL.unsubscribe(); subS.unsubscribe(); engine.stopPipeline(); engine.disconnectAll();
+      subL.unsubscribe(); subS.unsubscribe(); subStatus.unsubscribe();
       document.removeEventListener('mousedown', handleClickOutside);
       window.removeEventListener('resize', handleResize);
     };
@@ -723,7 +1159,7 @@ const Dashboard: React.FC<{
 
   return (
     <div className="h-full w-full bg-black text-white p-0 flex flex-col overflow-hidden relative">
-      <div id="app-header" className={`sticky top-0 z-[10000] flex flex-col shrink-0 border-b border-white/10 ${isFullscreen || isAiBookOpen ? 'hidden md:flex' : ''}`}>
+      <div id="app-header" className={`sticky top-0 z-[100000] flex flex-col shrink-0 border-b border-white/10 ${isAiBookOpen || isAuthModalOpen ? 'hidden' : ''}`}>
         {/* TOP ROW: LOGO + MAIN NAV + TOOLS */}
         <div className="flex justify-between items-center h-11 md:h-14 bg-black pl-1 pr-1 md:px-2 border-b border-white/5">
           <div className="flex items-center gap-1 md:gap-1">
@@ -734,11 +1170,21 @@ const Dashboard: React.FC<{
               <div className="md:hidden">
                 <Logo size="sm" />
               </div>
+              {connectionStatus !== 'CONNECTED' && (
+                <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-tighter transition-all ${
+                  connectionStatus === 'RECONNECTING' 
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-500 animate-pulse' 
+                  : 'bg-red-500/10 border-red-500/30 text-red-500'
+                }`}>
+                  <div className={`w-1 h-1 rounded-full ${connectionStatus === 'RECONNECTING' ? 'bg-amber-500' : 'bg-red-500'}`} />
+                  {connectionStatus === 'RECONNECTING' ? (language === 'ru' ? 'Переподключение...' : 'Reconnecting...') : (language === 'ru' ? 'Отключено' : 'Disconnected')}
+                </div>
+              )}
             </div>
           </div>
           
           <div className="hidden md:flex flex-1 justify-start ml-2 lg:ml-4 xl:ml-8">
-            <div className="flex items-center bg-white/[0.05] p-1 rounded-xl border border-white/10">
+            <div className="flex items-center bg-white/[0.02] p-1 rounded-xl">
                 <button 
                   onClick={() => {
                     if (checkSubscription('Charts')) {
@@ -747,12 +1193,13 @@ const Dashboard: React.FC<{
                   }} 
                   className={`flex items-center gap-2 px-3 xl:px-6 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${
                     activeTab === 'market' 
-                    ? 'bg-white/10 text-white shadow-[0_0_15px_rgba(255,255,255,0.05)] border border-white/20' 
-                    : 'text-white/40 hover:text-white/70 border border-transparent'
+                    ? 'bg-white/5 text-white shadow-[0_0_15px_rgba(255,255,255,0.03)]' 
+                    : 'text-white/40 hover:text-white/70'
                   }`}
                 >
-                  <Globe size={14} /> <span>{t.market}</span>
+                  <TrendingUp size={14} /> <span>{t.market}</span>
                 </button>
+                <div className="w-[1px] h-4 bg-white/10 mx-2" />
                 <button 
                   onClick={() => {
                     if (checkSubscription('Densities')) {
@@ -761,93 +1208,36 @@ const Dashboard: React.FC<{
                   }} 
                   className={`flex items-center gap-2 px-3 xl:px-6 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${
                     activeTab === 'screener' 
-                    ? 'bg-white/10 text-white shadow-[0_0_15px_rgba(255,255,255,0.05)] border border-white/20' 
-                    : 'text-white/40 hover:text-white/70 border border-transparent'
+                    ? 'bg-white/5 text-white shadow-[0_0_15px_rgba(255,255,255,0.03)]' 
+                    : 'text-white/40 hover:text-white/70'
                   }`}
                 >
                   <LayoutGrid size={14} /> <span>{t.densities}</span>
                 </button>
+                <div className="w-[1px] h-4 bg-white/10 mx-2" />
+                <button 
+                  onClick={() => {
+                    setActiveTab('top_movers');
+                  }} 
+                  className={`flex items-center gap-2 px-3 xl:px-6 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${
+                    activeTab === 'top_movers' 
+                    ? 'bg-white/5 text-white shadow-[0_0_15px_rgba(255,255,255,0.03)]' 
+                    : 'text-white/40 hover:text-white/70'
+                  }`}
+                >
+                  <BarChart2 size={14} /> <span>{t.top_movers}</span>
+                </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-4 md:gap-3 sm:gap-2">
-            <div className="relative" ref={exchangeDropdownRef}>
-              <button 
-                onClick={() => setIsExchangeDropdownOpen(!isExchangeDropdownOpen)} 
-                className={`text-[10px] sm:text-[11px] uppercase tracking-[0.1em] font-black px-2 sm:px-2 py-1.5 sm:py-1.5 rounded-xl border transition-all flex items-center gap-1.5 sm:gap-2 group ${
-                  isExchangeDropdownOpen 
-                  ? 'bg-black border-zinc-500/60 text-white shadow-[0_0_10px_rgba(255,255,255,0.05)]' 
-                  : 'bg-white/5 border-white/10 text-gray-400 hover:border-zinc-500/30 hover:bg-black hover:text-gray-300'
-                }`}
-              >
-                <span className="hidden lg:inline">{t.exchanges}</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-gray-400 font-mono text-xs sm:text-sm">[</span>
-                  <div className="flex gap-1">
-                    {(() => {
-                      const hasBinance = selectedExchanges['Binance Spot'] || selectedExchanges['Binance Futures'];
-                      const hasBybit = selectedExchanges['Bybit Spot'] || selectedExchanges['Bybit Futures'];
-                      const icons = [];
-                      if (hasBinance) icons.push({ id: 'binance', src: BINANCE_ICON, isBybit: false });
-                      if (hasBybit) icons.push({ id: 'bybit', src: BYBIT_ICON, isBybit: true });
-                      
-                      return icons.map(icon => (
-                        <div key={icon.id} className="w-3.5 h-3.5 sm:w-5 sm:h-5 rounded-full border border-white/10 bg-[#111] flex items-center justify-center overflow-hidden shadow-sm">
-                          <img 
-                            src={icon.src} 
-                            className={`w-full h-full object-contain ${icon.isBybit ? 'scale-[1.6] px-0.5' : 'p-0.5'}`} 
-                            alt="" 
-                          />
-                        </div>
-                      ));
-                    })()}
-                  </div>
-                  <span className="text-gray-400 font-mono text-xs sm:text-sm">]</span>
-                </div>
-                <ChevronDown size={12} className={`transition-transform duration-300 ${isExchangeDropdownOpen ? 'rotate-180' : ''}`} />
-              </button>
-
-              {isExchangeDropdownOpen && (
-                <div className="absolute top-full right-0 mt-3 bg-[#0a0a0a]/95 border border-zinc-500/30 p-2.5 sm:p-3 rounded-2xl shadow-[0_15px_40px_rgba(0,0,0,0.5)] z-[10001] w-64 sm:w-72 max-w-[calc(100vw-1rem)] backdrop-blur-2xl animate-in fade-in slide-in-from-top-3 duration-300">
-                  <div className="space-y-1.5 sm:space-y-2">
-                    {exchangeList.map(ex => (
-                      <div 
-                        key={ex.key} 
-                        onClick={() => toggleExchange(ex.key)}
-                        className={`flex items-center justify-between px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl border cursor-pointer transition-all group ${
-                          selectedExchanges[ex.key] 
-                          ? 'bg-black border-zinc-500/60 shadow-[0_0_10px_rgba(255,255,255,0.05)]' 
-                          : 'bg-black/40 border-white/5 hover:border-zinc-500/30 hover:bg-black'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="flex items-center gap-2">
-                            <ExchangeLogo exchange={ex.name as 'Binance' | 'Bybit'} size="w-10 h-6" />
-                            <div className="flex flex-col leading-tight">
-                              <span className={`text-[13px] font-bold tracking-tight ${selectedExchanges[ex.key] ? 'text-white' : 'text-gray-400'}`}>{ex.name}</span>
-                              <span className={`text-[8px] font-black uppercase tracking-[0.2em] leading-none ${selectedExchanges[ex.key] ? 'text-white' : 'text-white/40'}`}>{ex.sub}</span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
-                          selectedExchanges[ex.key] 
-                          ? 'bg-zinc-800 border border-white/20 shadow-[0_0_10px_rgba(255,255,255,0.1)]' 
-                          : 'bg-white/5 border border-white/10'
-                        }`}>
-                          {selectedExchanges[ex.key] && <Check size={14} className="text-white" />}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
+          <div className="flex items-center gap-2 md:gap-3">
             <LanguageSwitcher language={language} setLanguage={setLanguage} />
+
+            <div className="w-[1px] h-5 bg-white/10 mx-1 hidden md:block" />
 
             {/* TIMEFRAME SELECTOR - ONLY SHOW WHEN MULTIPLE CHARTS ARE ACTIVE */}
             {(chartLayout > 1 || comparisonCoins.length > 0) && (
-              <div className="flex items-center bg-[#151515] p-0.5 md:p-1 rounded-xl border border-white/10 shadow-xl">
+              <div className="flex items-center bg-white/[0.02] p-0.5 md:p-1 rounded-xl shadow-xl">
                 <div className="hidden sm:flex items-center">
                   {MAIN_TIMEFRAMES.map((tf) => (
                     <button 
@@ -922,15 +1312,21 @@ const Dashboard: React.FC<{
               </div>
             )}
 
+            <div className="w-[1px] h-5 bg-white/10 mx-1 hidden md:block" />
+
             <button 
               onClick={() => onNavigateToProfile()} 
-              className="hidden md:flex items-center gap-1.5 lg:gap-2.5 pl-1.5 lg:pl-3 pr-1 py-1 bg-white/5 border border-white/10 rounded-full hover:bg-white/10 transition-all group"
+              className="hidden md:flex items-center gap-1.5 lg:gap-2.5 pl-1.5 lg:pl-3 pr-1 py-1 bg-white/[0.02] rounded-full hover:bg-white/10 transition-all group"
             >
               <div className="hidden lg:flex flex-col items-end leading-none">
                 <span className="text-[10px] font-black text-white uppercase tracking-wider">{t.profile}</span>
               </div>
               <div className="p-0.5 bg-purple-500/10 border border-purple-500/20 rounded-full group-hover:bg-purple-500/20 transition-all">
-                <SubscriptionAvatar tier={avatarTier} size={28} />
+                <SubscriptionAvatar 
+                  tier={avatarTier} 
+                  size={28} 
+                  imageClassName="translate-y-[-2%] sm:translate-y-[5%] lg:translate-y-[42%] landscape:translate-y-[12%]"
+                />
               </div>
             </button>
           </div>
@@ -940,120 +1336,134 @@ const Dashboard: React.FC<{
       </div>
       
       <div className={`flex-1 min-h-0 overflow-hidden bg-[#050505] relative pb-16 md:pb-0 flex flex-row ${isAiBookOpen ? 'hidden md:flex' : ''}`}>
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {activeTab === 'market' ? (
-            <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-500 relative ${
-              isFullscreen ? 'fixed inset-0 z-[4000] bg-black' : ''
+        <div className="flex-1 flex flex-col overflow-hidden relative">
+          <div className={`flex-1 flex-col overflow-hidden transition-all duration-500 relative ${activeTab === 'market' ? 'flex' : 'hidden'} ${
+            isFullscreen ? 'fixed z-[50000] top-11 md:top-14 left-0 right-0 bottom-0 bg-black' : ''
+          }`}>
+            <ChartBlock 
+              previewCoin={previewCoin}
+              language={language}
+              t={t}
+              isPortrait={isPortrait}
+              isReplayMode={isReplayMode}
+              setIsReplayMode={setIsReplayMode}
+              setIsAiBookOpen={setIsAiBookOpen}
+              setAiBookCoin={setAiBookCoin}
+              timeframe={timeframe}
+              setTimeframe={setTimeframe}
+              historyState={historyState}
+              miniChartRef={miniChartRef}
+              showExtraTf={showExtraTf}
+              setShowExtraTf={setShowExtraTf}
+              tfDropdownRef={tfDropdownRef}
+              isFavorite={isFavorite}
+              toggleFavorite={toggleFavorite}
+              isFullscreen={isFullscreen}
+              chartLayout={chartLayout}
+              comparisonCoins={comparisonCoins}
+              checkSubscription={checkSubscription}
+            />
+            <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-500 bg-[#0a0a0a] relative ${
+              isFullscreen ? 'h-full w-full rounded-none border-none' : ''
             }`}>
-              <ChartBlock 
+              {/* MARKET SCREENER - HANDLES CHART, CONTROLS AND ITS OWN SCROLLABLE LIST */}
+              <MemoMarketScreener 
+                language={language} 
                 previewCoin={previewCoin}
-                language={language}
-                t={t}
-                isPortrait={isPortrait}
-                isReplayMode={isReplayMode}
-                setIsReplayMode={setIsReplayMode}
-                setIsAiBookOpen={setIsAiBookOpen}
-                setAiBookCoin={setAiBookCoin}
+                setPreviewCoin={handleSetPreviewCoin}
                 timeframe={timeframe}
                 setTimeframe={setTimeframe}
-                historyState={historyState}
                 miniChartRef={miniChartRef}
-                showExtraTf={showExtraTf}
-                setShowExtraTf={setShowExtraTf}
-                tfDropdownRef={tfDropdownRef}
-                isFavorite={isFavorite}
-                toggleFavorite={toggleFavorite}
-                isFullscreen={isFullscreen}
+                favorites={favorites}
+                onToggleFavorite={toggleFavorite}
+                rankMap={rankMap}
+                onHistoryChange={setHistoryState}
+                onOpenAI={(coin) => {
+                  if (checkSubscription('API Analysis')) {
+                    setAiBookCoin(coin);
+                    setIsAiBookOpen(true);
+                  }
+                }}
+                isAiModalOpen={isAiBookOpen}
                 chartLayout={chartLayout}
+                setChartLayout={setChartLayout}
+                isReplayMode={isReplayMode}
+                setIsReplayMode={setIsReplayMode}
+                isPlaying={isPlaying}
+                setIsPlaying={setIsPlaying}
+                replaySpeed={replaySpeed}
+                setReplaySpeed={setReplaySpeed}
                 comparisonCoins={comparisonCoins}
+                setComparisonCoins={setComparisonCoins}
+                alerts={alerts}
+                setAlerts={setAlerts}
+                engine={engine}
+                isFullscreen={isFullscreen}
+                setIsFullscreen={setIsFullscreen}
+                isSettingsLoaded={isSettingsLoaded}
+                activeTool={activeTool}
+                onToolChange={setActiveTool}
+                magnetEnabled={magnetEnabled}
+                onMagnetChange={onToggleMagnet}
+                isCoinSelectorOpen={isCoinSelectorOpen}
+                setIsCoinSelectorOpen={setIsCoinSelectorOpen}
+                selectorSlotIndex={selectorSlotIndex}
+                setSelectorSlotIndex={setSelectorSlotIndex}
+                drawings={drawings}
+                onDrawingsChange={onDrawingsChange}
+                activeExchanges={activeExchanges}
+                setActiveExchanges={setActiveExchanges}
+                activeTypes={activeTypes}
+                setActiveTypes={setActiveTypes}
+                viewMode={viewMode}
+                setViewMode={setViewMode}
+                sortConfig={sortConfig}
+                setSortConfig={setSortConfig}
                 checkSubscription={checkSubscription}
               />
-              <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-500 bg-[#0a0a0a] relative ${
-                isFullscreen ? 'h-full w-full rounded-none border-none' : ''
-              }`}>
-                {/* MARKET SCREENER - HANDLES CHART, CONTROLS AND ITS OWN SCROLLABLE LIST */}
-                <MemoMarketScreener 
-                  language={language} 
-                  previewCoin={previewCoin}
-                  setPreviewCoin={handleSetPreviewCoin}
-                  timeframe={timeframe}
-                  setTimeframe={setTimeframe}
-                  miniChartRef={miniChartRef}
-                  favorites={favorites}
-                  onToggleFavorite={toggleFavorite}
-                  rankMap={rankMap}
-                  onHistoryChange={setHistoryState}
-                  onOpenAI={(coin) => {
-                    if (checkSubscription('API Analysis')) {
-                      setAiBookCoin(coin);
-                      setIsAiBookOpen(true);
-                    }
-                  }}
-                  isAiModalOpen={isAiBookOpen}
-                  chartLayout={chartLayout}
-                  setChartLayout={setChartLayout}
-                  isReplayMode={isReplayMode}
-                  setIsReplayMode={setIsReplayMode}
-                  isPlaying={isPlaying}
-                  setIsPlaying={setIsPlaying}
-                  replaySpeed={replaySpeed}
-                  setReplaySpeed={setReplaySpeed}
-                  comparisonCoins={comparisonCoins}
-                  setComparisonCoins={setComparisonCoins}
-                  alerts={alerts}
-                  setAlerts={setAlerts}
-                  engine={engine}
-                  isFullscreen={isFullscreen}
-                  setIsFullscreen={setIsFullscreen}
-                  isSettingsLoaded={isSettingsLoaded}
-                  activeTool={activeTool}
-                  onToolChange={setActiveTool}
-                  magnetEnabled={magnetEnabled}
-                  onMagnetChange={onToggleMagnet}
-                  isCoinSelectorOpen={isCoinSelectorOpen}
-                  setIsCoinSelectorOpen={setIsCoinSelectorOpen}
-                  selectorSlotIndex={selectorSlotIndex}
-                  setSelectorSlotIndex={setSelectorSlotIndex}
-                  drawings={drawings}
-                  onDrawingsChange={onDrawingsChange}
-                  activeExchanges={activeExchanges}
-                  setActiveExchanges={setActiveExchanges}
-                  activeTypes={activeTypes}
-                  setActiveTypes={setActiveTypes}
-                  viewMode={viewMode}
-                  setViewMode={setViewMode}
-                  sortConfig={sortConfig}
-                  setSortConfig={setSortConfig}
-                  checkSubscription={checkSubscription}
-                />
-              </div>
             </div>
-          ) : (
-            <div className="flex-1 flex flex-col overflow-hidden">
-              {/* COINS BLOCK - SCROLLABLE */}
-              <div ref={scrollContainerRef} className="flex-1 overflow-y-auto bg-[#0a0a0a] relative custom-scroll scroll-smooth flex flex-col">
-                <MemoTable 
-                  shortData={filteredShortData} 
-                  longData={filteredLongData} 
-                  language={language} 
-                  onOpenAI={(coin) => {
-                    if (checkSubscription('API Analysis')) {
-                      setAiBookCoin(coin);
-                      setIsAiBookOpen(true);
-                    }
-                  }}
-                  spotSettings={spotSettings}
-                  futuresSettings={futuresSettings}
-                  onSettingChange={handleInputChange}
-                  onResetSettings={resetToDefault}
-                  isBlurred={isRestricted}
-                />
-              </div>
+          </div>
+
+          <div className={`flex-1 overflow-hidden transition-all duration-500 relative ${activeTab === 'screener' ? 'flex flex-col' : 'hidden'}`}>
+            <div 
+              ref={screenerListRef}
+              onScroll={resetNavTimeout}
+              className="flex-1 overflow-y-auto bg-[#0a0a0a] relative custom-scroll scroll-smooth flex flex-col"
+            >
+              <MemoTable 
+                shortData={filteredShortData} 
+                longData={filteredLongData} 
+                language={language} 
+                onOpenAI={(coin) => {
+                  if (checkSubscription('API Analysis')) {
+                    setAiBookCoin(coin);
+                    setIsAiBookOpen(true);
+                  }
+                }}
+                spotSettings={spotSettings}
+                futuresSettings={futuresSettings}
+                onSettingChange={handleInputChange}
+                onResetSettings={resetToDefault}
+                isBlurred={isRestricted}
+                activeExchanges={selectedExchanges}
+                onToggleExchange={toggleExchange}
+              />
             </div>
-          )}
+          </div>
+
+          <div className={`flex-1 overflow-hidden transition-all duration-500 relative ${activeTab === 'top_movers' ? 'flex flex-col' : 'hidden'}`}>
+            <div 
+              className="flex-1 overflow-hidden bg-[#0a0a0a] relative flex flex-col"
+            >
+              <TopMoversView data={marketCoins} onSelectCoin={(coin) => {
+                setActiveTab('market');
+                handleSetPreviewCoin(coin);
+              }} />
+            </div>
+          </div>
         </div>
 
-        {activeTab === 'market' && (
+        <div className={activeTab === 'market' ? 'flex' : 'hidden'}>
           <MarketSidebar 
             language={language} 
             chartLayout={chartLayout}
@@ -1066,11 +1476,9 @@ const Dashboard: React.FC<{
             setIsOpen={setIsSidebarOpen}
             onSelectCoin={(coin) => {
               setComparisonCoins(prev => {
-                // Check if already in list
                 const exists = prev.some(c => c.symbol === coin.symbol && c.exchange === coin.exchange && c.market === coin.market);
                 if (exists) return prev;
-                
-                const newList = [...prev, coin].slice(0, 3); // Max 3 comparison coins (total 4 charts)
+                const newList = [...prev, coin].slice(0, 3);
                 setChartLayout(newList.length + 1);
                 return newList;
               });
@@ -1078,14 +1486,10 @@ const Dashboard: React.FC<{
             comparisonCoins={comparisonCoins}
             replayState={{ isReplayMode, isPlaying, replaySpeed }}
             onToggleReplayMode={() => {
-              if (checkSubscription('Simulator')) {
-                setIsReplayMode(!isReplayMode);
-              }
+              if (checkSubscription('Simulator')) setIsReplayMode(!isReplayMode);
             }}
             onTogglePlayPause={() => {
-              if (checkSubscription('Simulator')) {
-                setIsPlaying(!isPlaying);
-              }
+              if (checkSubscription('Simulator')) setIsPlaying(!isPlaying);
             }}
             onSetReplaySpeed={setReplaySpeed}
             activeTool={activeTool}
@@ -1103,7 +1507,7 @@ const Dashboard: React.FC<{
             }}
             checkSubscription={checkSubscription}
           />
-        )}
+        </div>
       </div>
 
       {isAiBookOpen && aiBookCoin && (
@@ -1117,51 +1521,76 @@ const Dashboard: React.FC<{
         />
       )}
 
+      {/* Mobile Bottom Navigation Fade Gradient */}
+      {!isFullscreen && !isAiBookOpen && (
+        <div className={`md:hidden fixed bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none z-[19999] transition-all duration-500 ${isNavVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full'}`} />
+      )}
+
       {/* Mobile Bottom Navigation */}
       {!isFullscreen && !isAiBookOpen && (
-        <div className="md:hidden fixed bottom-0 left-0 right-0 h-12 bg-black/40 backdrop-blur-2xl border-t border-white/10 flex items-center justify-around px-2 z-[20000] pb-safe">
+        <div className={`md:hidden fixed bottom-1.5 left-1.5 right-1.5 h-12 bg-[#050505]/90 rounded-2xl backdrop-blur-xl flex items-center justify-around px-4 z-[20000] pb-safe transition-all duration-500 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] ${isNavVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full'}`}>
           <button 
             onClick={() => {
               if (checkSubscription('Charts')) {
                 setActiveTab('market');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
               }
             }}
             className={`flex flex-col items-center justify-center gap-0.5 w-16 transition-all ${
-              activeTab === 'market' ? 'text-purple-400' : 'text-gray-500'
+              activeTab === 'market' ? 'text-white' : 'text-gray-500'
             }`}
           >
-            <Globe size={18} className={activeTab === 'market' ? 'scale-110' : ''} />
+            <TrendingUp size={18} className={activeTab === 'market' ? 'scale-110 text-white' : ''} />
             <span className="text-[8px] font-bold uppercase tracking-tighter">{t.market}</span>
           </button>
+
+          <div className="w-[1px] h-4 bg-white/10" />
 
           <button 
             onClick={() => {
               if (checkSubscription('Densities')) {
                 setActiveTab('screener');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
               }
             }}
             className={`flex flex-col items-center justify-center gap-0.5 w-16 transition-all ${
-              activeTab === 'screener' ? 'text-purple-400' : 'text-gray-500'
+              activeTab === 'screener' ? 'text-white' : 'text-gray-500'
             }`}
           >
-            <LayoutGrid size={18} className={activeTab === 'screener' ? 'scale-110' : ''} />
+            <LayoutGrid size={18} className={activeTab === 'screener' ? 'scale-110 text-white' : ''} />
             <span className="text-[8px] font-bold uppercase tracking-tighter">{t.densities}</span>
           </button>
 
+          <div className="w-[1px] h-4 bg-white/10" />
+
           <button 
-            className="flex flex-col items-center justify-center gap-0.5 w-16 text-gray-500 hover:text-white transition-colors"
-            onClick={() => setIsMobileSettingsOpen(true)}
+            onClick={() => {
+              setActiveTab('top_movers');
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+            className={`flex flex-col items-center justify-center gap-0.5 w-16 transition-all ${
+              activeTab === 'top_movers' ? 'text-white' : 'text-gray-500'
+            }`}
           >
-            <Settings size={18} />
-            <span className="text-[8px] font-bold uppercase tracking-tighter">{t.settings}</span>
+            <BarChart2 size={18} className={activeTab === 'top_movers' ? 'scale-110 text-white' : ''} />
+            <span className="text-[8px] font-bold uppercase tracking-tighter">{t.top_movers}</span>
           </button>
+
+          <div className="w-[1px] h-4 bg-white/10" />
 
           <button 
             className="flex flex-col items-center justify-center gap-0.5 w-16 text-gray-500 hover:text-white transition-colors"
-            onClick={() => onNavigateToProfile()}
+            onClick={() => {
+              onNavigateToProfile();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
           >
             <div className="w-6 h-6 rounded-full overflow-hidden border border-white/10">
-              <SubscriptionAvatar tier={avatarTier} size={24} />
+              <SubscriptionAvatar 
+                tier={avatarTier} 
+                size={24} 
+                imageClassName="translate-y-[-2%] sm:translate-y-[5%] lg:translate-y-[42%] landscape:translate-y-[12%]"
+              />
             </div>
             <span className="text-[8px] font-bold uppercase tracking-tighter">{t.profile}</span>
           </button>
@@ -1170,21 +1599,43 @@ const Dashboard: React.FC<{
 
       {/* Floating Trial Notification */}
       {dbUser && trialTimeLeft !== null && trialTimeLeft > 0 && showTrialNotification && (
-        <div className="fixed top-6 left-6 md:top-8 md:left-8 z-[100000] animate-in slide-in-from-top-10 fade-in duration-500">
-          <div className="bg-[#0d0d0d] border border-green-500/50 rounded-2xl px-6 py-4 flex items-center gap-4 shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_20px_rgba(34,197,94,0.1)] backdrop-blur-xl">
-            {/* Green Checkmark Icon */}
-            <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center border border-green-500/20 shrink-0">
-              <Check size={20} className="text-green-500" strokeWidth={3} />
-            </div>
+        <div className="fixed top-6 right-6 md:top-8 md:right-8 z-[100000] animate-slide-in-right">
+          <div className="bg-[#050605] border border-green-500/50 rounded-[1.5rem] overflow-hidden shadow-[0_0_30px_rgba(34,197,94,0.2)]">
+            <div className="px-6 py-4 flex items-center gap-5 relative overflow-hidden">
+              {/* Subtle wave pattern in background */}
+              <div className="absolute inset-0 opacity-10 pointer-events-none">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(34,197,94,0.1),transparent_70%)]" />
+              </div>
 
-            {/* Text */}
-            <div className="flex flex-col">
-              <span className="text-lg font-bold text-white tracking-tight leading-tight">
-                {language === 'ru' ? 'Выдан пробный период' : 'Trial period granted'}
-              </span>
-              <span className="text-sm font-medium text-white/70 mt-0.5">
-                {language === 'ru' ? 'на 1 минуту' : 'for 1 minute'}
-              </span>
+              {/* Green Checkmark Icon (Matching Image Style) */}
+              <div className="relative shrink-0">
+                {/* Decorative Sparkles */}
+                <div className="absolute -top-1 -right-1 w-2 h-2 bg-yellow-400 rounded-full blur-[2px] animate-pulse" />
+                <div className="absolute -bottom-2 -left-1 w-1.5 h-1.5 bg-yellow-400 rounded-full blur-[1px] animate-pulse delay-75" />
+                
+                <div className="w-14 h-14 rounded-full bg-green-500/10 border border-yellow-500/50 flex items-center justify-center relative">
+                   {/* Glow layer */}
+                   <div className="absolute inset-0 rounded-full bg-yellow-500/20 blur-md" />
+                   
+                   {/* Main Circle */}
+                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center shadow-[0_0_15px_rgba(234,179,8,0.5)] border-2 border-yellow-400 z-10">
+                    <Check size={20} className="text-[#050605]" strokeWidth={5} />
+                   </div>
+
+                   {/* Secondary rings */}
+                   <div className="absolute inset-0 rounded-full border border-yellow-500/30 opacity-50 scale-110" />
+                </div>
+              </div>
+
+              {/* Text (Matching Image Style) */}
+              <div className="flex flex-col z-10">
+                <div className="text-xl font-bold text-white tracking-tight leading-tight">
+                  {language === 'ru' ? 'Выдан пробный период' : 'Trial period granted'}
+                </div>
+                <div className="text-base font-bold text-green-500 mt-0.5 opacity-90">
+                  {language === 'ru' ? 'на 2 дня.' : 'for 2 days.'}
+                </div>
+              </div>
             </div>
           </div>
         </div>

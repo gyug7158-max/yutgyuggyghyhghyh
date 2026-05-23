@@ -72,9 +72,7 @@ export async function initializeDatabase() {
   const path = await import('path');
   const { fileURLToPath } = await import('url');
 
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-  const schemaPath = path.join(__dirname, '../../schema.sql');
+  const schemaPath = path.join(process.cwd(), 'schema.sql');
 
   if (fs.existsSync(schemaPath)) {
     console.log('Initializing database with schema...');
@@ -104,7 +102,10 @@ export async function initializeDatabase() {
       { name: 'referral_income', type: 'DECIMAL(20, 2)', default: '0.00' },
       { name: 'referral_clicks', type: 'INTEGER', default: '0' },
       { name: 'is_online', type: 'BOOLEAN', default: 'false' },
-      { name: 'last_seen', type: 'TIMESTAMPTZ', default: 'NOW()' }
+      { name: 'last_seen', type: 'TIMESTAMPTZ', default: 'NOW()' },
+      { name: 'is_verified', type: 'BOOLEAN', default: 'false' },
+      { name: 'verification_code', type: 'TEXT' },
+      { name: 'verification_code_expires', type: 'TIMESTAMP WITH TIME ZONE' }
     ];
 
     for (const col of columnsToAdd) {

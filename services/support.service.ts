@@ -9,6 +9,7 @@ export class SupportService {
   public messages$ = this.messagesSubject.asObservable();
   private socket: WebSocket | null = null;
   private userId: string | null = null;
+  private pollInterval: any = null;
 
   private constructor() {}
 
@@ -22,11 +23,30 @@ export class SupportService {
   public async initialize(userId: string) {
     this.userId = userId;
     try {
-      const history = await apiService.getSupportHistory(userId);
-      this.messagesSubject.next(history);
+      await this.refreshMessages();
       this.connectWebSocket();
+      
+      // Setup polling fallback (every 5 seconds)
+      if (this.pollInterval) clearInterval(this.pollInterval);
+      this.pollInterval = setInterval(() => this.refreshMessages(), 5000);
     } catch (error) {
       console.error('Failed to initialize support service:', error);
+    }
+  }
+
+  public async refreshMessages() {
+    if (!this.userId) return;
+    try {
+      const history = await apiService.getSupportHistory(this.userId);
+      const current = this.messagesSubject.value;
+      
+      // Only update if something changed to avoid unnecessary UI flickers/re-renders
+      // Simple length check or content check
+      if (history.length !== current.length || JSON.stringify(history) !== JSON.stringify(current)) {
+        this.messagesSubject.next(history);
+      }
+    } catch (error) {
+      console.error('[SupportService] Polling error:', error);
     }
   }
 
@@ -35,7 +55,7 @@ export class SupportService {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const wsUrl = `${protocol}//${host}`;
+    const wsUrl = `${protocol}//${host}/ws/densities`;
 
     this.socket = new WebSocket(wsUrl);
 
@@ -51,7 +71,11 @@ export class SupportService {
 
     this.socket.onmessage = (event) => {
       try {
+        if (!event.data) return;
         const data = JSON.parse(event.data);
+        if (data.type === 'HEARTBEAT') {
+          return; // Keepalive
+        }
         if (data.type === 'SUPPORT_MESSAGE_RECEIVED') {
           const currentMessages = this.messagesSubject.value;
           
@@ -83,8 +107,21 @@ export class SupportService {
     };
 
     this.socket.onclose = () => {
-      console.warn('[SupportService] Socket closed. Reloading page...');
-      window.location.reload();
+      console.warn('[SupportService] Socket closed. Attempting reconnect in 3s...');
+      this.socket = null;
+      // Reconnect after 3 seconds if we still have a userId
+      setTimeout(() => {
+        if (this.userId) {
+          this.connectWebSocket();
+        }
+      }, 3000);
+    };
+
+    this.socket.onerror = (err) => {
+      console.error('[SupportService] Socket error:', err);
+      if (this.socket) {
+        this.socket.close();
+      }
     };
   }
 
@@ -98,6 +135,8 @@ export class SupportService {
       user_id: userId,
       message: text,
       sender_type: 'user',
+      sender_role: 'user',
+      is_read: true,
       created_at: new Date().toISOString()
     };
 
@@ -125,6 +164,11 @@ export class SupportService {
   }
 
   public disconnect() {
+    this.userId = null; // Prevent automatic reconnection
+    if (this.pollInterval) {
+      clearInterval(this.pollInterval);
+      this.pollInterval = null;
+    }
     if (this.socket) {
       this.socket.close();
       this.socket = null;

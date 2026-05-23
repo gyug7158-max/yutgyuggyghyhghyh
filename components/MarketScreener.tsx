@@ -6,12 +6,12 @@ import { CandlestickPlusIcon } from './UI/Icons';
 import { MiniChart } from './UI/MiniChart';
 import { ExchangeLogo } from './UI/Shared';
 import './QuantumCard.css';
-import { GoogleGenAI } from "@google/genai";
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Language, translations } from '../src/translations';
 import { BINANCE_ICON, BYBIT_ICON } from '../src/constants';
 import { SmarteyeEngineService } from '../services/smarteye-engine.service';
+import { chartStreamService } from '../services/chart-stream.service';
 import { simulatorService } from '../services/trading-simulator.service';
 
 export interface MarketCoin {
@@ -105,13 +105,13 @@ const FavoritesBar = React.memo(({
                 onClick={() => onSelect(coin)}
                 className={`flex items-center gap-2 px-2 py-1 rounded-xl border transition-all duration-300 cursor-pointer whitespace-nowrap group relative ${
                   isActive 
-                  ? 'bg-purple-500/10 border-purple-500 shadow-[0_0_15px_rgba(139,92,246,0.2)]' 
+                  ? 'bg-purple-500/10 border-purple-500/20 shadow-[0_0_15px_rgba(139,92,246,0.1)]' 
                   : 'bg-[#0a0a0a] border-white/5 hover:border-purple-500/30 hover:bg-white/[0.02]'
                 }`}
               >
                 {/* Coin Icon with Ring */}
                 <div className={`w-6 h-6 rounded-full p-0.5 border flex items-center justify-center transition-colors ${
-                  isActive ? 'border-purple-500' : 'border-white/10 group-hover:border-purple-500/30'
+                  isActive ? 'border-purple-500/40' : 'border-white/10 group-hover:border-purple-500/30'
                 }`}>
                   <div className="w-full h-full rounded-full overflow-hidden bg-black flex items-center justify-center">
                     <img src={`/api/logos/${coin.baseAsset.toUpperCase()}`} className="w-full h-full object-contain" alt="" />
@@ -184,7 +184,7 @@ const CoinLogo = React.memo(({ baseAsset, size = "w-16 h-16", padding = "p-3" }:
   };
 
   return (
-    <div className={`${size} rounded-full bg-[#050505] flex items-center justify-center overflow-hidden border-2 border-white/10 shrink-0 shadow-2xl group-hover:border-purple-500/30 transition-all duration-500 relative`}>
+    <div className={`${size} rounded-full bg-[#050505] flex items-center justify-center overflow-hidden border border-white/10 shrink-0 shadow-2xl group-hover:border-purple-500/30 transition-all duration-500 relative`}>
       {!error ? (
         <img 
           src={src} 
@@ -233,11 +233,9 @@ const Sparkline = React.memo(({ symbol, exchange, market, isLong }: { symbol: st
 
         let url = '';
         if (exchange === 'Binance') {
-          url = market === 'SPOT' 
-            ? `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=24`
-            : `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=24`;
+          url = `/api/ticker/binance/${symbol}?market=${market}`;
         } else {
-          url = `https://api.bybit.com/v5/market/kline?category=${market === 'SPOT' ? 'spot' : 'linear'}&symbol=${symbol}&interval=60&limit=24`;
+          url = `/api/tickers/bybit/${market === 'SPOT' ? 'spot' : 'linear'}?symbol=${symbol}`;
         }
 
         const res = await fetch(url);
@@ -247,7 +245,22 @@ const Sparkline = React.memo(({ symbol, exchange, market, isLong }: { symbol: st
 
         let closePrices: number[] = [];
         if (exchange === 'Binance') {
-          closePrices = data.map((d: any) => parseFloat(d[4]));
+          // Binance individual ticker API doesn't return history, but our proxy handles it if we use klines
+          // Wait, I should probably proxy klines too if history is needed.
+          // For now, let's keep it simple or use the kline proxy if I added it.
+          // Actually, MarketScreener was using direct binance.com for klines.
+          // Let's add kline proxy to server too if needed.
+          // But for now, let's just use the proxy for tickers.
+          
+          // Actually, line 237 used klines. Let me add kline proxy.
+          url = `/api/klines/${exchange.toLowerCase()}/${market.toLowerCase()}?symbol=${symbol}`;
+          const kRes = await fetch(url);
+          const kData = await kRes.json();
+          if (exchange === 'Binance') {
+             closePrices = kData.map((d: any) => parseFloat(d[4]));
+          } else {
+             closePrices = kData.result.list.map((d: any) => parseFloat(d[4])).reverse();
+          }
         } else {
           closePrices = data.result.list.map((d: any) => parseFloat(d[4])).reverse();
         }
@@ -356,7 +369,7 @@ export interface MarketScreenerProps {
   selectorSlotIndex: number | null;
   setSelectorSlotIndex: React.Dispatch<React.SetStateAction<number | null>>;
   drawings: Record<string, any[]>;
-  onDrawingsChange: (symbol: string, drawings: any[]) => void;
+  onDrawingsChange: (key: string, drawings: any[]) => void;
   activeExchanges: Record<string, boolean>;
   setActiveExchanges: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   activeTypes: Record<string, boolean>;
@@ -426,6 +439,11 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
   setSortConfig,
   checkSubscription
 }) => {
+  const getDrawingKey = (coin: MarketCoin | null) => {
+    if (!coin) return '';
+    return `${coin.exchange}:${coin.market}:${coin.symbol}`;
+  };
+  
   const t = translations[language];
   const [data, setData] = useState<MarketCoin[]>([]);
   const [positions, setPositions] = useState<any[]>([]);
@@ -535,6 +553,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
     wasFullscreenRef.current = isFullscreen;
 
     if (isFullscreen) {
+      // In fullscreen, we want to use the full viewport height accurately
       setChartHeight(height);
     } else {
       // Responsive heights for tablet and mobile
@@ -645,31 +664,82 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
   const toggleFavorite = onToggleFavorite;
 
   const isFetchingRef = useRef(false);
+  const lastFullFetchRef = useRef(0);
 
-  const fetchData = async () => {
+    const fetchActiveCoinTicker = async (coin: MarketCoin) => {
+    try {
+      let url = '';
+      if (coin.exchange === 'Binance') {
+        const host = coin.market === 'SPOT' ? 'api.binance.com' : 'fapi.binance.com';
+        const path = coin.market === 'SPOT' ? '/api/v3/ticker/24hr' : '/fapi/v1/ticker/24hr';
+        url = `https://${host}${path}?symbol=${coin.symbol}`;
+      } else {
+        const category = coin.market === 'SPOT' ? 'spot' : 'linear';
+        url = `https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${coin.symbol}`;
+      }
+
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const t = await res.json();
+
+      let updated: Partial<MarketCoin> | null = null;
+
+      if (coin.exchange === 'Binance') {
+        updated = {
+          price: parseFloat(t.lastPrice),
+          change24h: parseFloat(t.priceChangePercent),
+          volume24h: parseFloat(t.quoteVolume)
+        };
+      } else {
+        const list = Array.isArray(t.result?.list) ? t.result.list : [];
+        const item = list.find((i: any) => i.symbol === coin.symbol) || list[0];
+        if (item) {
+          updated = {
+            price: parseFloat(item.lastPrice),
+            change24h: parseFloat(item.price24hPcnt) * 100,
+            volume24h: parseFloat(item.turnover24h)
+          };
+        }
+      }
+
+      if (updated && (updated.price !== coin.price || updated.change24h !== coin.change24h)) {
+        const newCoin = { ...coin, ...updated };
+        setPreviewCoin(newCoin);
+        currentPreviewRef.current = newCoin;
+      }
+    } catch (e) {
+      // Ignore errors for individual ticker fetches
+    }
+  };
+
+   const fetchData = async (forceFull = false) => {
     if (isFetchingRef.current) return;
+    
+    const now = Date.now();
+    const shouldFetchFull = forceFull || (now - lastFullFetchRef.current > 1000); 
+
+    if (!shouldFetchFull) {
+      if (currentPreviewRef.current) {
+        await fetchActiveCoinTicker(currentPreviewRef.current);
+      }
+      return;
+    }
+
     isFetchingRef.current = true;
+    lastFullFetchRef.current = now;
 
     try {
-      const fetchWithTimeout = async (url: string) => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        try {
-          const res = await fetch(url, { signal: controller.signal });
-          clearTimeout(timeout);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return await res.json();
-        } catch (e) {
-          clearTimeout(timeout);
-          throw e;
-        }
+      const fetchDirectProxy = async (proxyUrl: string) => {
+        const res = await fetch(proxyUrl);
+        if (!res.ok) throw new Error(`Proxy status ${res.status}`);
+        return await res.json();
       };
 
       const results = await Promise.allSettled([
-        fetchWithTimeout('https://api.binance.com/api/v3/ticker/24hr'), 
-        fetchWithTimeout('https://fapi.binance.com/fapi/v1/ticker/24hr'), 
-        fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=spot'), 
-        fetchWithTimeout('https://api.bybit.com/v5/market/tickers?category=linear'), 
+        fetchDirectProxy('/api/tickers/binance/spot'), 
+        fetchDirectProxy('/api/tickers/binance/futures'), 
+        fetchDirectProxy('/api/tickers/bybit/spot'), 
+        fetchDirectProxy('/api/tickers/bybit/linear'), 
       ]);
 
       const getTop50 = (list: MarketCoin[]) => {
@@ -791,10 +861,27 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
   };
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 8000);
-    return () => clearInterval(interval);
-  }, []);
+    let isMounted = true;
+    let pollTimeout: NodeJS.Timeout;
+
+    const poll = async () => {
+      if (!isMounted) return;
+      
+      // Only force full fetch if list is empty AND we haven't fetched in the last 10 seconds
+      const needsFullInitial = data.length === 0 && (Date.now() - lastFullFetchRef.current > 10000);
+      await fetchData(needsFullInitial);
+      
+      if (isMounted) {
+        pollTimeout = setTimeout(poll, 1000);
+      }
+    };
+
+    poll();
+    return () => {
+      isMounted = false;
+      if (pollTimeout) clearTimeout(pollTimeout);
+    };
+  }, [data.length]);
 
   // Ensure default coin selection triggers as soon as data and settings are both ready
   useEffect(() => {
@@ -817,10 +904,10 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
     if (!previewCoin) return;
     
     // Subscribe to ticker via engine
-    engine.subscribeTicker(previewCoin.symbol, previewCoin.exchange, previewCoin.market);
+    chartStreamService.subscribeTicker(previewCoin.symbol, previewCoin.exchange, previewCoin.market);
     
     // Listen for ticker updates
-    const sub = engine.ticker$.subscribe(update => {
+    const sub = chartStreamService.ticker$.subscribe(update => {
       if (update.symbol === previewCoin.symbol && 
           update.exchange === previewCoin.exchange && 
           update.marketType === previewCoin.market) {
@@ -834,7 +921,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
     
     return () => {
       sub.unsubscribe();
-      engine.unsubscribeTicker(previewCoin.symbol, previewCoin.exchange, previewCoin.market);
+      chartStreamService.unsubscribeTicker(previewCoin.symbol, previewCoin.exchange, previewCoin.market);
     };
   }, [previewCoin?.symbol, previewCoin?.exchange, previewCoin?.market, engine]);
 
@@ -843,10 +930,10 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
     if (comparisonCoins.length === 0) return;
     
     comparisonCoins.forEach(coin => {
-      engine.subscribeTicker(coin.symbol, coin.exchange, coin.market);
+      chartStreamService.subscribeTicker(coin.symbol, coin.exchange, coin.market);
     });
     
-    const sub = engine.ticker$.subscribe(update => {
+    const sub = chartStreamService.ticker$.subscribe(update => {
       setComparisonCoins(prev => prev.map(coin => {
         if (coin.symbol === update.symbol && 
             coin.exchange === update.exchange && 
@@ -860,7 +947,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
     return () => {
       sub.unsubscribe();
       comparisonCoins.forEach(coin => {
-        engine.unsubscribeTicker(coin.symbol, coin.exchange, coin.market);
+        chartStreamService.unsubscribeTicker(coin.symbol, coin.exchange, coin.market);
       });
     };
   }, [comparisonCoins.length, engine]);
@@ -1070,8 +1157,8 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
         {/* ОБЛАСТЬ ГРАФИКА - ТЕПЕРЬ ВНУТРИ ПРОКРУТКИ И ЗАКРЕПЛЕНА */}
         <div 
           ref={chartContainerRef}
-          className="sticky top-0 z-[100] flex flex-col border-b border-white/5 bg-[#0a0a0a] shrink-0 shadow-xl"
-          style={{ height: `${chartHeight}px` }}
+          className={`${isFullscreen ? 'fixed z-[99999] top-11 md:top-14 left-0 right-0 bottom-0' : 'sticky top-0 z-[100] shrink-0 border-b border-white/5 shadow-xl'} flex flex-col bg-[#0a0a0a] overflow-hidden`}
+          style={!isFullscreen ? { height: `${chartHeight}px` } : {}}
         >
           {!isFullscreen && (
             <FavoritesBar 
@@ -1142,7 +1229,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
               'grid-cols-1 md:grid-cols-2'
             }`}>
               {/* Main Chart */}
-              <div className="relative border border-purple-900/40 overflow-hidden shadow-2xl">
+              <div className={`relative ${isFullscreen ? 'border-none' : 'border border-purple-900/40'} overflow-hidden shadow-2xl`}>
                 {previewCoin ? (
                   <MiniChart 
                     ref={miniChartRef}
@@ -1155,7 +1242,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
                     marketType={previewCoin.market} 
                     exchange={previewCoin.exchange}
                     isExpanded={true} 
-                    height={(favoriteCoinsData.length > 0 && !isFullscreen) ? chartHeight - 36 : chartHeight} 
+                    height={isFullscreen ? undefined : ((favoriteCoinsData.length > 0) ? chartHeight - 36 : chartHeight)} 
                     onHistoryChange={onHistoryChange}
                     isReplayMode={isReplayMode}
                     setIsReplayMode={setIsReplayMode}
@@ -1171,8 +1258,8 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
                     onToolChange={onToolChange}
                     magnetEnabled={magnetEnabled}
                     onMagnetChange={onMagnetChange}
-                    drawings={previewCoin ? (drawings[previewCoin.symbol] || []) : []}
-                    onDrawingsChange={(newDrawings) => previewCoin && onDrawingsChange(previewCoin.symbol, newDrawings)}
+                    drawings={previewCoin ? (drawings[getDrawingKey(previewCoin)] || []) : []}
+                    onDrawingsChange={(newDrawings) => previewCoin && onDrawingsChange(getDrawingKey(previewCoin), newDrawings)}
                   />
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center opacity-10">
@@ -1185,7 +1272,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
               {Array.from({ length: chartLayout - 1 }).map((_, idx) => {
                 const coin = comparisonCoins[idx];
                 return (
-                  <div key={idx} className="relative border border-purple-900/40 bg-[#0d0d0d] overflow-hidden shadow-2xl animate-in slide-in-from-right duration-500">
+                  <div key={idx} className="relative group border border-purple-900/40 bg-[#0d0d0d] overflow-hidden shadow-2xl animate-in slide-in-from-right duration-500">
                     {coin ? (
                       <>
                         <MiniChart 
@@ -1198,7 +1285,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
                           marketType={coin.market} 
                           exchange={coin.exchange}
                           isExpanded={true} 
-                          height={(favoriteCoinsData.length > 0 && !isFullscreen) ? chartHeight - 36 : chartHeight} 
+                          height={isFullscreen ? undefined : ((favoriteCoinsData.length > 0) ? chartHeight - 36 : chartHeight)} 
                           isReplayMode={isReplayMode}
                           setIsReplayMode={setIsReplayMode}
                           alerts={alerts}
@@ -1210,6 +1297,8 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
                           onToolChange={onToolChange}
                           magnetEnabled={magnetEnabled}
                           onMagnetChange={onMagnetChange}
+                          drawings={drawings[getDrawingKey(coin)] || []}
+                          onDrawingsChange={(newDrawings) => onDrawingsChange(getDrawingKey(coin), newDrawings)}
                         />
                         <button 
                           onClick={() => {
@@ -1219,7 +1308,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
                               return newList;
                             });
                           }}
-                          className="absolute top-4 left-12 p-1.5 bg-white/10 hover:bg-white/20 text-white hover:text-white rounded-lg border border-white/20 transition-all z-[140]"
+                          className="absolute top-4 left-12 p-1.5 bg-white/10 hover:bg-white/20 text-white hover:text-white rounded-full border border-white/20 transition-all z-[140] opacity-0 group-hover:opacity-100 shadow-lg"
                         >
                           <X size={14} />
                         </button>
@@ -1386,7 +1475,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
 
                   {isExchangeFilterOpen && exchangeBtnRect && (
                     <div 
-                      className="fixed mt-3 bg-[#0a0a0a] border border-zinc-500/40 p-1.5 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8),0_0_30px_rgba(255,255,255,0.05)] z-[2000] w-48 animate-in fade-in slide-in-from-top-3 duration-300"
+                      className="fixed mt-3 bg-[#0a0a0a] border border-zinc-500/40 p-1.5 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8),0_0_30px_rgba(255,255,255,0.05)] z-[110000] w-48 animate-in fade-in slide-in-from-top-3 duration-300"
                       style={{ 
                         top: exchangeBtnRect.bottom, 
                         left: Math.min(exchangeBtnRect.left, window.innerWidth - 200) 
@@ -1450,7 +1539,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
 
                   {isTypeFilterOpen && typeBtnRect && (
                     <div 
-                      className="fixed mt-3 bg-[#0a0a0a] border border-zinc-500/40 p-1.5 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9),0_0_30px_rgba(255,255,255,0.05)] z-[2000] w-48 animate-in fade-in slide-in-from-top-3 duration-300"
+                      className="fixed mt-3 bg-[#0a0a0a] border border-zinc-500/40 p-1.5 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9),0_0_30px_rgba(255,255,255,0.05)] z-[110000] w-48 animate-in fade-in slide-in-from-top-3 duration-300"
                       style={{ 
                         top: typeBtnRect.bottom, 
                         left: Math.min(typeBtnRect.left, window.innerWidth - 200) 
@@ -1938,7 +2027,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
                 {isSelectorExchangeOpen && selectorExchangeRect && createPortal(
                   <div 
                     ref={selectorExchangeDropdownRef}
-                    className="fixed mt-2 w-48 bg-[#0a0a0a] border border-zinc-500/40 p-1.5 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8),0_0_30px_rgba(255,255,255,0.05)] z-[9999] animate-in fade-in slide-in-from-top-3 duration-300"
+                    className="fixed mt-2 w-48 bg-[#0a0a0a] border border-zinc-500/40 p-1.5 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.8),0_0_30px_rgba(255,255,255,0.05)] z-[110000] animate-in fade-in slide-in-from-top-3 duration-300"
                     style={{
                       top: selectorExchangeRect.bottom,
                       left: Math.min(selectorExchangeRect.left, window.innerWidth - 200)
@@ -2003,7 +2092,7 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
                 {isSelectorTypeOpen && selectorTypeRect && createPortal(
                   <div 
                     ref={selectorTypeDropdownRef}
-                    className="fixed mt-2 w-48 bg-[#0a0a0a] border border-zinc-500/40 p-1.5 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9),0_0_30px_rgba(255,255,255,0.05)] z-[9999] animate-in fade-in slide-in-from-top-3 duration-200"
+                    className="fixed mt-2 w-48 bg-[#0a0a0a] border border-zinc-500/40 p-1.5 rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.9),0_0_30px_rgba(255,255,255,0.05)] z-[110000] animate-in fade-in slide-in-from-top-3 duration-200"
                     style={{
                       top: selectorTypeRect.bottom,
                       left: Math.min(selectorTypeRect.left, window.innerWidth - 200)

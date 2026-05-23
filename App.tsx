@@ -1,8 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import Dashboard from './components/Dashboard';
-import ProfilePage from './components/ProfilePage';
 import { AuthMode } from './types';
-import { Logo } from './components/UI/Icons';
 import { AuthCard } from './components/Auth/AuthForms';
 import { ToastContainer, ToastMessage, ToastType } from './components/UI/Shared';
 import { Language, translations } from './src/translations';
@@ -12,6 +10,17 @@ import { apiService } from './services/api.service';
 import { DBUser } from './models';
 
 import { LanguageSwitcher } from './src/components/UI/LanguageSwitcher';
+import { Routes, Route, Navigate } from 'react-router-dom';
+
+import ProfilePage from './components/ProfilePage';
+import PrivacyPolicy from './components/PrivacyPolicy';
+import TermsOfService from './components/TermsOfService';
+
+const LoadingFallback: React.FC = () => (
+  <div className="min-h-screen bg-black flex items-center justify-center">
+    <div className="w-10 h-10 border-2 border-purple-500/20 border-t-purple-500 rounded-full animate-spin"></div>
+  </div>
+);
 
 const AuthPreviewImage: React.FC<{ src: string; alt: string; label: string }> = ({ src, alt, label }) => {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -22,7 +31,7 @@ const AuthPreviewImage: React.FC<{ src: string; alt: string; label: string }> = 
       <div className="relative overflow-hidden rounded-xl bg-white/5 aspect-[16/10] sm:aspect-video">
         {!isLoaded && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/5 animate-pulse">
-            <div className="w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full animate-spin"></div>
+            <div className="w-8 h-8 border border-white/20 border-t-white/60 rounded-full animate-spin"></div>
           </div>
         )}
         <img 
@@ -49,8 +58,8 @@ const App: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [currentView, setCurrentView] = useState<'dashboard' | 'profile'>('dashboard');
   const [profileTab, setProfileTab] = useState<'profile' | 'subscription' | 'affiliate' | 'guide'>('profile');
-  const [profilePlan, setProfilePlan] = useState<'1month' | '3months' | '1year'>('1year');
-  const [dashboardTab, setDashboardTab] = useState<'screener' | 'market'>('market');
+  const [profilePlan, setProfilePlan] = useState<'1month' | '6months' | '1year'>('1year');
+  const [dashboardTab, setDashboardTab] = useState<'screener' | 'market' | 'top_movers'>('market');
   const [userEmail, setUserEmail] = useState('');
   const [dbUser, setDbUser] = useState<DBUser | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>(AuthMode.LOGIN);
@@ -80,17 +89,43 @@ const App: React.FC = () => {
 
   // Handle referral links
   useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const refParam = searchParams.get('ref');
     const path = window.location.pathname;
+    
+    let partnerId = refParam;
     if (path.startsWith('/ref/')) {
-      const refId = path.split('/ref/')[1];
-      if (refId && refId !== 'guest') {
-        localStorage.setItem('se_referrer_id', refId);
+      partnerId = path.split('/ref/')[1];
+    }
+
+    if (partnerId && partnerId !== 'guest') {
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      
+      if (uuidPattern.test(partnerId)) {
+        localStorage.setItem('se_referrer_id', partnerId);
+        
+        console.log('Detected referral partnerId:', partnerId);
+
+        // Track the click on the server
+        apiService.trackPartnerClick(partnerId).then(res => {
+          console.log('Partner click tracked successfully:', res);
+        }).catch(err => {
+          console.warn('Failed to track partner click:', err);
+        });
+
         // Clear the URL without reloading
-        window.history.replaceState({}, document.title, '/');
+        if (path.startsWith('/ref/')) {
+          window.history.replaceState({}, document.title, '/');
+        } else if (refParam) {
+          searchParams.delete('ref');
+          const newSearch = searchParams.toString();
+          window.history.replaceState({}, document.title, window.location.pathname + (newSearch ? '?' + newSearch : ''));
+        }
+        
         showToast(language === 'ru' ? 'Реферальный код активирован' : 'Referral code activated', 'info');
       }
     }
-  }, [language]);
+  }, [language, window.location.search, window.location.pathname]);
 
   // Scroll to top on view change
   useEffect(() => {
@@ -104,7 +139,7 @@ const App: React.FC = () => {
   }, [currentView, isAuthenticated]);
 
   // Subscription state lifted from ProfilePage
-  const [avatarTier, setAvatarTier] = useState<'free' | '1month' | '3months' | '1year'>(() => {
+  const [avatarTier, setAvatarTier] = useState<'free' | '1month' | '6months' | '1year'>(() => {
     return (localStorage.getItem('se_avatar_tier') as any) || 'free';
   });
   const [subscriptionTier, setSubscriptionTier] = useState<'free' | 'pro' | 'whale'>(() => {
@@ -209,65 +244,82 @@ const App: React.FC = () => {
     setPremiumEndDate('');
     setCurrentView('dashboard');
     setShowAuthModal(false);
+    setAuthMode(AuthMode.LOGIN);
+  };
+
+  const closeAuthModal = () => {
+    setShowAuthModal(false);
+    setAuthMode(AuthMode.LOGIN);
   };
 
   return (
     <div className="min-h-screen flex flex-col font-sans relative overflow-x-auto overflow-y-auto bg-[#0a0a0a] text-white custom-scroll overscroll-behavior-none">
       <ToastContainer toasts={toasts} removeToast={(id) => setToasts(t => t.filter(x => x.id !== id))} />
 
-      {currentView === 'profile' && isAuthenticated ? (
-        <ProfilePage 
-          onBack={(tab) => {
-            if (tab) setDashboardTab(tab);
-            setCurrentView('dashboard');
-          }} 
-          onLogout={handleLogout}
-          language={language} 
-          avatarTier={avatarTier}
-          setAvatarTier={setAvatarTier}
-          subscriptionTier={subscriptionTier}
-          setSubscriptionTier={setSubscriptionTier}
-          premiumEndDate={premiumEndDate}
-          setPremiumEndDate={setPremiumEndDate}
-          dbUser={dbUser}
-          initialTab={profileTab}
-          initialPlan={profilePlan}
-          refreshUser={refreshUser}
-        />
-      ) : (
-        <Dashboard 
-          onNavigateToProfile={(tab, plan) => {
-            if (!isAuthenticated) {
-              setShowAuthModal(true);
-              return;
-            }
-            if (tab) setProfileTab(tab as any);
-            else setProfileTab('profile');
-            
-            if (plan) setProfilePlan(plan as any);
-            else setProfilePlan('1year');
-            
-            setCurrentView('profile');
-          }} 
-          onLogout={handleLogout}
-          language={language}
-          setLanguage={setLanguage}
-          engine={engineRef}
-          avatarTier={isAuthenticated ? avatarTier : 'free'}
-          subscriptionTier={isAuthenticated ? subscriptionTier : 'free'}
-          dbUser={dbUser}
-          activeTab={dashboardTab}
-          setActiveTab={setDashboardTab}
-          refreshUser={refreshUser}
-          onAuthRequired={() => setShowAuthModal(true)}
-          showToast={showToast}
-        />
-      )}
+      <Suspense fallback={<LoadingFallback />}>
+        <Routes>
+          <Route path="/privacy" element={<PrivacyPolicy />} />
+          <Route path="/terms" element={<TermsOfService />} />
+          <Route path="/" element={
+            currentView === 'profile' && isAuthenticated ? (
+              <ProfilePage 
+                onBack={(tab) => {
+                  if (tab) setDashboardTab(tab);
+                  setCurrentView('dashboard');
+                }} 
+                onLogout={handleLogout}
+                language={language} 
+                avatarTier={avatarTier}
+                setAvatarTier={setAvatarTier}
+                subscriptionTier={subscriptionTier}
+                setSubscriptionTier={setSubscriptionTier}
+                premiumEndDate={premiumEndDate}
+                setPremiumEndDate={setPremiumEndDate}
+                dbUser={dbUser}
+                initialTab={profileTab}
+                initialPlan={profilePlan}
+                refreshUser={refreshUser}
+                showToast={showToast}
+              />
+            ) : (
+              <Dashboard 
+                onNavigateToProfile={(tab, plan) => {
+                  if (!isAuthenticated) {
+                    setShowAuthModal(true);
+                    return;
+                  }
+                  if (tab) setProfileTab(tab as any);
+                  else setProfileTab('profile');
+                  
+                  if (plan) setProfilePlan(plan as any);
+                  else setProfilePlan('1year');
+                  
+                  setCurrentView('profile');
+                }} 
+                onLogout={handleLogout}
+                language={language}
+                setLanguage={setLanguage}
+                engine={engineRef}
+                avatarTier={isAuthenticated ? avatarTier : 'free'}
+                subscriptionTier={isAuthenticated ? subscriptionTier : 'free'}
+                dbUser={dbUser}
+                activeTab={dashboardTab}
+                setActiveTab={setDashboardTab}
+                refreshUser={refreshUser}
+                onAuthRequired={() => setShowAuthModal(true)}
+                showToast={showToast}
+                isAuthModalOpen={!isAuthenticated && showAuthModal}
+              />
+            )
+          } />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
 
       {/* Auth Modal Overlay */}
       {(!isAuthenticated && showAuthModal) && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowAuthModal(false)}></div>
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={closeAuthModal}></div>
           
           <main className="relative z-10 w-full flex items-center justify-center pointer-events-none px-4 max-w-[1600px] mx-auto">
             {/* Desktop Preview Images */}
@@ -289,11 +341,6 @@ const App: React.FC = () => {
               <div className="sm:hidden w-full max-w-[440px] flex flex-col gap-4">
                 <div className="bg-[#0d0d1a] border border-white/10 rounded-3xl p-5 shadow-[0_0_50px_rgba(0,0,0,0.8)] relative overflow-hidden">
                   <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.02)_0%,rgba(0,0,0,0.4)_100%)] pointer-events-none"></div>
-                  <div className="absolute top-4 right-4 z-20">
-                    <button onClick={() => setShowAuthModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                      <X className="w-5 h-5 text-gray-400" />
-                    </button>
-                  </div>
                   <AuthCard 
                     authMode={authMode} 
                     setAuthMode={setAuthMode} 
@@ -310,11 +357,6 @@ const App: React.FC = () => {
               {/* Desktop View: Card */}
               <div className="hidden sm:block w-full min-w-[460px] max-w-[500px] bg-[#0d0d1a] border border-white/10 rounded-3xl p-8 shadow-[0_0_60px_rgba(0,0,0,0.8),0_0_30px_rgba(255,255,255,0.02)] relative overflow-hidden group">
                 <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.02)_0%,rgba(0,0,0,0.4)_100%)] pointer-events-none"></div>
-                <div className="absolute top-4 right-4 z-20">
-                  <button onClick={() => setShowAuthModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                    <X className="w-5 h-5 text-gray-400" />
-                  </button>
-                </div>
                 <AuthCard 
                   authMode={authMode} 
                   setAuthMode={setAuthMode} 

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { RowData, OrderBookEntry, SettingsState, MarketType } from '../models';
 import './QuantumCard.css';
-import { BarChart3, Navigation, Type, ShieldCheck, Activity, BrainCircuit, Settings, RotateCcw, LayoutGrid, List, Volume2, BellRing } from 'lucide-react';
+import { BarChart3, Navigation, Type, ShieldCheck, Activity, BrainCircuit, Settings, RotateCcw, LayoutGrid, List, Volume2, BellRing, ChevronDown, ChevronUp, Check, Info } from 'lucide-react';
 import { AIBookModal } from './AIBookModal';
 import { ExchangeLogo } from './UI/Shared';
 import { Language, translations } from '../src/translations';
@@ -54,7 +54,6 @@ const OrderBookMini: React.FC<{ depth: OrderBookEntry[]; isLong: boolean; langua
     <div className="qc-ob-container">
       <div className="qc-ob-header flex items-center justify-between mb-1 px-1">
         <span className="qc-ob-header-text font-bold text-gray-500 tracking-[0.2em] uppercase">{t.order_book_slice}</span>
-        <Activity size={8} className="text-purple-500 animate-pulse" />
       </div>
       
       <div className="qc-ob-list">
@@ -147,7 +146,6 @@ const DensityCard = React.memo(({ data, isLong, onAnalyze, language, isBlurred }
            
            <div className="qc-hud-status">
               <span className="qc-hud-status-text" style={{ color: statusColor }}>{statusLabel}</span>
-              <div className="qc-hud-blinker" style={{ backgroundColor: statusColor, boxShadow: `0 0 8px ${statusColor}` }}></div>
            </div>
         </div>
 
@@ -160,25 +158,28 @@ const DensityCard = React.memo(({ data, isLong, onAnalyze, language, isBlurred }
           </div>
         </div>
 
-        <div className="qc-hud-grid">
-           <div className="qc-hud-metric-box">
-              <div className="qc-metric-label">{t.volume}</div>
-              <div className="qc-metric-value text-accent">${density}</div>
-           </div>
+         <div className="qc-hud-grid">
+            <div className="qc-hud-metric-box">
+               <div className="qc-metric-label text-[10px] sm:text-[12px]">{t.volume}</div>
+               <div className="qc-metric-value text-accent text-[11px] sm:text-[16px]">${density}</div>
+            </div>
 
-           <div className="qc-hud-metric-box">
-              <div className="qc-metric-label">RD (X)</div>
-              <div className="qc-metric-value" style={{ color: rdColor }}>{rd.toFixed(1)}</div>
-           </div>
+            <div className="qc-hud-metric-box">
+               <div className="qc-metric-label text-[10px] sm:text-[12px]">RD (X)</div>
+               <div className="qc-metric-value text-[11px] sm:text-[16px]" style={{ color: rdColor }}>{rd.toFixed(1)}</div>
+            </div>
 
-           <div className="qc-hud-metric-box">
-              <div className="qc-metric-label">{t.distance}</div>
-              <div className="qc-metric-value" style={{ color: statusColor }}>
-                 {pctStr}
-              </div>
-           </div>
+            <div className="qc-hud-metric-box">
+               <div className="qc-metric-label text-[10px] sm:text-[12px]">
+                  <span className="sm:hidden">{t.distance_short}</span>
+                  <span className="hidden sm:inline">{t.distance}</span>
+               </div>
+               <div className="qc-metric-value text-[11px] sm:text-[16px]" style={{ color: statusColor }}>
+                  {pctStr}
+               </div>
+            </div>
 
-        </div>
+         </div>
 
         <div className="qc-hud-ob-section">
            <OrderBookMini depth={data.depth || []} isLong={isLong} language={language} />
@@ -248,13 +249,16 @@ const DensityRow = React.memo(({ data, isLong, onAnalyze, language, isBlurred }:
         </div>
         
         <div className="flex flex-col">
-          <span className="text-[8px] text-gray-500 uppercase font-bold tracking-tighter">{t.volume}</span>
-          <span className="text-[11px] font-mono text-accent">${density}</span>
+          <span className="text-[7px] sm:text-[8px] text-gray-500 uppercase font-bold tracking-tighter">{t.volume}</span>
+          <span className="text-[10px] sm:text-[11px] font-mono text-accent">${density}</span>
         </div>
 
         <div className="flex flex-col">
-          <span className="text-[8px] text-gray-500 uppercase font-bold tracking-tighter">{t.distance}</span>
-          <span className="text-[11px] font-mono" style={{ color: statusColor }}>{pctStr}</span>
+          <span className="text-[7px] sm:text-[8px] text-gray-500 uppercase font-bold tracking-tighter">
+            <span className="sm:hidden">{t.distance_short}</span>
+            <span className="hidden sm:inline">{t.distance}</span>
+          </span>
+          <span className="text-[10px] sm:text-[11px] font-mono" style={{ color: statusColor }}>{pctStr}</span>
         </div>
 
         <div className="flex flex-col">
@@ -278,7 +282,7 @@ const SortButton: React.FC<{
   mode: SortMode, 
   currentMode: SortMode, 
   icon: any, 
-  label: string, 
+  label: string | React.ReactNode, 
   onSelect: (m: SortMode) => void 
 }> = ({ mode, currentMode, icon: Icon, label, onSelect }) => (
   <button 
@@ -287,20 +291,20 @@ const SortButton: React.FC<{
       e.stopPropagation();
       onSelect(mode);
     }}
-    className={`relative flex items-center gap-2 px-4 py-2 rounded-xl group pointer-events-auto cursor-pointer transition-all border ${
+    className={`relative flex items-center gap-1.5 sm:gap-2 px-3 sm:px-6 py-1.5 sm:py-2.5 rounded-full group pointer-events-auto cursor-pointer transition-all border ${
       currentMode === mode 
-      ? 'bg-black/40 border-purple-500/50 shadow-[0_0_20px_rgba(168,85,247,0.15)]' 
-      : 'bg-black/20 border-white/5 hover:border-purple-500/30'
+      ? 'bg-[#0d0d0d] border-zinc-500 shadow-[0_0_20px_rgba(255,255,255,0.05)]' 
+      : 'bg-[#0d0d0d] border-zinc-800/80 hover:border-zinc-700'
     }`}
   >
-    <Icon size={12} className={currentMode === mode ? 'text-purple-500' : 'text-gray-500 group-hover:text-gray-300'} />
-    <span className={`text-[10px] font-black uppercase tracking-widest ${
-      currentMode === mode ? 'text-white' : 'text-gray-500 group-hover:text-gray-300'
+    <span className={`text-[9px] sm:text-[11px] font-black uppercase tracking-[0.1em] sm:tracking-[0.15em] transition-colors ${
+      currentMode === mode ? 'text-white' : 'text-zinc-500 group-hover:text-zinc-300'
     }`}>
       {label}
     </span>
+    
     {currentMode === mode && (
-      <div className="absolute -bottom-[1px] left-1/2 -translate-x-1/2 w-1/2 h-[2px] bg-purple-500 shadow-[0_0_10px_rgba(168,85,247,0.8)] rounded-full" />
+      <div className="absolute -bottom-[1px] left-1/2 -translate-x-1/2 w-[60%] h-[3px] bg-white rounded-full shadow-[0_0_12px_rgba(255,255,255,0.4)]" />
     )}
   </button>
 );
@@ -332,6 +336,8 @@ const Table: React.FC<{
   onSettingChange: (type: MarketType, key: keyof SettingsState, val: any) => void;
   onResetSettings: (type: MarketType) => void;
   isBlurred?: boolean;
+  activeExchanges: Record<string, boolean>;
+  onToggleExchange: (key: string) => void;
 }> = ({ 
   shortData, 
   longData, 
@@ -341,11 +347,16 @@ const Table: React.FC<{
   futuresSettings,
   onSettingChange,
   onResetSettings,
-  isBlurred = false
+  isBlurred = false,
+  activeExchanges,
+  onToggleExchange
 }) => {
   const [sortMode, setSortMode] = useState<SortMode>('volume');
   const [isSettingsDropdownOpen, setIsSettingsDropdownOpen] = useState(false);
+  const [isInfoTooltipOpen, setIsInfoTooltipOpen] = useState(false);
+  const [isExchangesOpen, setIsExchangesOpen] = useState(false);
   const settingsDropdownRef = React.useRef<HTMLDivElement>(null);
+  const infoTooltipRef = React.useRef<HTMLDivElement>(null);
   const t = translations[language];
 
   const settingLabels: Record<keyof SettingsState, string> = {
@@ -378,6 +389,9 @@ const Table: React.FC<{
     const handleClickOutside = (event: MouseEvent) => {
       if (settingsDropdownRef.current && !settingsDropdownRef.current.contains(event.target as Node)) {
         setIsSettingsDropdownOpen(false);
+      }
+      if (infoTooltipRef.current && !infoTooltipRef.current.contains(event.target as Node)) {
+        setIsInfoTooltipOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -425,170 +439,252 @@ const Table: React.FC<{
 
   return (
     <div className="w-full flex flex-col bg-[#0a0a0a] relative">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-[#0a0a0a] backdrop-blur-xl shrink-0 z-[40] pointer-events-auto">
-        <div className="flex items-center gap-2">
-          <SortButton mode="volume" currentMode={sortMode} icon={BarChart3} label={t.volume} onSelect={setSortMode} />
-          <SortButton mode="distance" currentMode={sortMode} icon={Navigation} label={t.distance} onSelect={setSortMode} />
-          <SortButton mode="alphabet" currentMode={sortMode} icon={Type} label={t.asset} onSelect={setSortMode} />
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 border-b border-white/5 bg-[#0a0a0a] backdrop-blur-xl shrink-0 z-[40] pointer-events-auto">
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          <SortButton mode="volume" currentMode={sortMode} icon={null} label={t.volume} onSelect={setSortMode} />
+          <SortButton 
+            mode="distance" 
+            currentMode={sortMode} 
+            icon={null} 
+            label={
+              <>
+                <span className="sm:hidden">{t.distance_short}</span>
+                <span className="hidden sm:inline">{t.distance}</span>
+              </>
+            } 
+            onSelect={setSortMode} 
+          />
+          <SortButton mode="alphabet" currentMode={sortMode} icon={null} label={t.alphabet} onSelect={setSortMode} />
         </div>
         
-        <div className="flex items-center gap-3">
-          <div className="text-[9px] font-mono text-white uppercase tracking-widest">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="hidden sm:block text-[9px] font-mono text-white uppercase tracking-widest">
             {t.monitoring} <span>{sortedData.length}</span>
+          </div>
+
+          <div className="relative inline-flex group/tooltip" ref={infoTooltipRef}>
+            <div 
+              onClick={() => setIsInfoTooltipOpen(!isInfoTooltipOpen)}
+              className={`w-8 h-8 rounded-full border flex items-center justify-center cursor-pointer transition-all hover:bg-white/5 ${isInfoTooltipOpen ? 'bg-white/10 border-white/50 text-white' : 'border-white/20 text-white hover:border-white/50'}`}
+            >
+              <Info size={16} />
+            </div>
+            <div className={`absolute right-0 top-full mt-4 w-64 md:w-80 p-5 bg-[#0d0d1a]/95 backdrop-blur-xl border border-white/10 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-300 z-[1000000] ring-1 ring-white/5 
+              ${isInfoTooltipOpen 
+                ? 'opacity-100 visible translate-y-0 pointer-events-auto' 
+                : 'opacity-0 invisible -translate-y-2 pointer-events-none group-hover/tooltip:opacity-100 group-hover/tooltip:visible group-hover/tooltip:translate-y-0 group-hover/tooltip:pointer-events-auto'
+              }`}
+            >
+              <div className="flex flex-col">
+                <p className="text-[12px] font-medium leading-relaxed text-gray-400 normal-case tracking-normal text-left">
+                  {t.screener_tooltip_body}
+                </p>
+              </div>
+              <div className="absolute bottom-full right-3 border-8 border-transparent border-b-[#0d0d1a]" />
+            </div>
           </div>
 
           <div className="relative" ref={settingsDropdownRef}>
             <button 
               onClick={() => setIsSettingsDropdownOpen(!isSettingsDropdownOpen)} 
-              className={`p-2 bg-white/5 border border-white/10 rounded-full hover:bg-white/10 backdrop-blur-md transition-all group ${isSettingsDropdownOpen ? 'border-white/30 bg-white/20' : ''}`}
+              className={`p-2 bg-white/5 border border-white/20 rounded-full hover:bg-white/10 backdrop-blur-md transition-all group ${isSettingsDropdownOpen ? 'border-white/50 bg-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)]' : ''}`}
             >
-              <Settings size={18} className={isSettingsDropdownOpen ? 'text-white' : 'text-white/40 group-hover:text-white transition-colors'} />
+              <Settings size={18} className="text-white transition-colors" />
             </button>
             {isSettingsDropdownOpen && (
-              <div className="absolute top-full right-0 mt-4 w-[calc(100vw-2rem)] sm:w-[820px] bg-[#0a0a0a] border border-white/10 rounded-[32px] shadow-[0_40px_100px_rgba(0,0,0,0.8)] z-[100] p-6 sm:p-10 flex flex-col sm:flex-row gap-8 sm:gap-16 backdrop-blur-3xl animate-in fade-in zoom-in-95 duration-300 overflow-hidden ring-1 ring-white/5">
-                {(['SPOT', 'FUTURES'] as MarketType[]).map(type => (
-                  <div key={type} className="flex-1 flex flex-col">
-                    <div className="flex flex-col gap-4 mb-6">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-2 h-2 rounded-full shadow-[0_0_10px_currentColor] ${type === 'SPOT' ? 'text-[#00ffa3] bg-[#00ffa3]' : 'text-[#ff9900] bg-[#ff9900]'}`} />
-                          <div className="text-[13px] font-black uppercase tracking-[0.4em] text-white">
-                            {type === 'SPOT' ? t.spot : t.futures}
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => onResetSettings(type)} 
-                          className="text-white/20 hover:text-white transition-all hover:rotate-180 duration-500"
-                        >
-                          <RotateCcw size={16} />
-                        </button>
-                      </div>
-
-                      {/* Notification Block */}
-                      <div className={`flex items-center justify-between p-4 rounded-2xl border transition-all duration-300 ${
-                        (type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled)
-                          ? 'bg-white border-white shadow-[0_20px_40px_rgba(255,255,255,0.15)] scale-[1.02]'
-                          : 'bg-white/5 border-white/10'
-                      }`}>
-                        <div className="flex items-center gap-3">
-                          <BellRing 
-                            size={18} 
-                            className={(type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled) 
-                              ? 'text-amber-400 animate-bounce' 
-                              : 'text-white/30'} 
-                          />
-                          <span className={`text-[10px] font-black uppercase tracking-widest transition-colors ${
-                            (type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled)
-                              ? 'text-black'
-                              : 'text-white/40'
-                          }`}>
-                            {t.density_notification}
-                          </span>
-                        </div>
-                        <button 
-                          onClick={() => handleAlarmToggle(type)}
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-all duration-300 focus:outline-none ${
-                            (type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled) 
-                              ? 'bg-white ring-1 ring-black/5 shadow-inner' 
-                              : 'bg-zinc-800 border border-white/5'
-                          }`}
-                        >
-                          <span className={`inline-block h-4 w-4 transform rounded-full transition-all duration-300 ${
-                            (type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled) 
-                              ? 'translate-x-[22px] bg-zinc-500 shadow-[0_2px_10px_rgba(0,0,0,0.1)]' 
-                              : 'translate-x-1 bg-white/20'
-                          }`} />
-                        </button>
-                      </div>
+              <div className="absolute top-full right-0 mt-4 w-[calc(100vw-1.5rem)] md:w-[720px] lg:w-[920px] bg-[#0a0a0a] border border-white/10 rounded-[24px] sm:rounded-[32px] shadow-[0_40px_100px_rgba(0,0,0,0.8)] z-[25000] p-4 sm:p-10 flex flex-col backdrop-blur-3xl animate-in fade-in zoom-in-95 duration-300 overflow-y-auto max-h-[85vh] max-md:landscape:max-h-none md:max-h-[85vh] lg:max-h-none no-scrollbar ring-1 ring-white/5 sm:max-w-none max-md:landscape:p-6">
+                {/* Exchanges Section - Now at the Top */}
+                <div className="mb-4 sm:mb-8 max-md:landscape:mb-3 pb-4 sm:pb-8 max-md:landscape:pb-3 border-b border-white/10">
+                  <button 
+                    onClick={() => setIsExchangesOpen(!isExchangesOpen)}
+                    className="flex items-center justify-between w-full group py-2 sm:py-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <LayoutGrid size={16} className="sm:size-[18px] text-white/40 group-hover:text-white transition-colors" />
+                      <span className="text-[11px] sm:text-[13px] font-black uppercase tracking-[0.2em] sm:tracking-[0.4em] text-white">{t.exchanges_label || t.exchanges}</span>
                     </div>
-                    
-                    <div className="space-y-0">
-                      <div className="flex items-center justify-between py-5 border-b border-white/5 group">
-                        <div className="flex flex-col">
-                          <label className="text-[11px] text-white uppercase font-bold tracking-wider group-hover:text-white/70 transition-colors">
-                            {settingLabels.peerMultiplier}
-                          </label>
-                        </div>
-                        <div className="flex flex-col items-end gap-1 w-40 sm:w-56">
-                          <div className="relative w-full pt-4 pb-4">
-                            <input 
-                              type="range"
-                              min="1"
-                              max="5"
-                              step="1"
-                              value={getDominationSliderVal(type === 'SPOT' ? spotSettings.peerMultiplier : futuresSettings.peerMultiplier)}
-                              onChange={(e) => {
-                                const sliderVal = parseInt(e.target.value);
-                                const mappedVal = DOMINATION_MAP[sliderVal];
-                                onSettingChange(type, 'peerMultiplier', mappedVal.toString());
-                              }}
-                              className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer relative z-10
-                                [&::-webkit-slider-thumb]:appearance-none 
-                                [&::-webkit-slider-thumb]:w-4 
-                                [&::-webkit-slider-thumb]:h-4 
-                                [&::-webkit-slider-thumb]:rounded-full 
-                                [&::-webkit-slider-thumb]:bg-black 
-                                [&::-webkit-slider-thumb]:border-2 
-                                [&::-webkit-slider-thumb]:border-zinc-500
-                                hover:[&::-webkit-slider-thumb]:border-zinc-400
-                                [&::-webkit-slider-thumb]:shadow-[0_0_10px_rgba(0,0,0,0.3)]
-                                [&::-webkit-slider-thumb]:transition-all"
-                            />
-                            {/* Ticks & Numbers Above */}
-                            <div className="absolute top-0 left-0 w-full pointer-events-none flex justify-between px-0.5">
-                              {[1, 2, 3, 4, 5].map(v => (
-                                <div key={v} className="flex flex-col items-center justify-end h-4">
-                                  <span className={`text-[11px] mb-0.5 font-black transition-colors ${getDominationSliderVal(type === 'SPOT' ? spotSettings.peerMultiplier : futuresSettings.peerMultiplier) === v ? 'text-white' : 'text-white/20'}`}>
-                                    {v}
-                                  </span>
-                                  <div className={`w-[1px] h-1 ${getDominationSliderVal(type === 'SPOT' ? spotSettings.peerMultiplier : futuresSettings.peerMultiplier) === v ? 'bg-purple-500' : 'bg-white/20'}`} />
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="text-[10px] font-black uppercase text-white underline decoration-white/40 underline-offset-4 shadow-[0_0_10px_rgba(255,255,255,0.2)] text-right leading-none -mt-2">
-                            {(() => {
-                              const val = getDominationSliderVal(type === 'SPOT' ? spotSettings.peerMultiplier : futuresSettings.peerMultiplier);
-                              return val === 1 ? t.density_weak :
-                                     val === 2 ? t.density_medium :
-                                     val === 3 ? t.density_normal :
-                                     val === 4 ? t.density_good :
-                                     t.density_strong;
-                            })()}
-                          </div>
-                        </div>
-                      </div>
+                    <ChevronDown size={16} className={`sm:size-[18px] text-white/20 transition-transform duration-500 ${isExchangesOpen ? 'rotate-180' : ''}`} />
+                  </button>
 
-                      {Object.keys(type === 'SPOT' ? spotSettings : futuresSettings)
-                        .filter(k => ['minDensityVolume', 'distancePercentage'].includes(k))
-                        .map((key, idx, arr) => {
-                          const rawVal = type === 'SPOT' ? (spotSettings as any)[key] : (futuresSettings as any)[key];
-                          // Formatting only for Volume fields (exclude percentage)
-                          const displayVal = key === 'minDensityVolume'
-                            ? rawVal.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ') 
-                            : rawVal;
-                          
-                          return (
-                            <div key={key} className={`flex items-center justify-between py-5 ${idx !== arr.length - 1 ? 'border-b border-white/5' : ''} group`}>
-                              <div className="flex flex-col">
-                                <label className="text-[11px] text-white uppercase font-bold tracking-wider group-hover:text-white/70 transition-colors">
-                                  {(settingLabels as any)[key]}
-                                </label>
-                              </div>
-                              <input 
-                                className="w-24 sm:w-36 bg-[#151515] border border-white/10 rounded-2xl text-[13px] px-4 py-2.5 text-right focus:border-white/30 focus:bg-[#1a1a1a] outline-none font-mono text-white transition-all shadow-inner" 
-                                value={displayVal} 
-                                onChange={(e) => {
-                                  const val = e.target.value.replace(/\s/g, '');
-                                  onSettingChange(type, key as any, val);
-                                }} 
-                              />
+                  <div className={`overflow-hidden transition-all duration-500 ${isExchangesOpen ? 'max-h-[500px] mt-4 sm:mt-6 max-md:landscape:mt-2 opacity-100' : 'max-h-0 opacity-0'}`}>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      {['Binance Spot', 'Binance Futures', 'Bybit Spot', 'Bybit Futures'].map(ex => (
+                        <div 
+                          key={ex}
+                          className="flex items-center justify-between p-3 sm:p-4 bg-white/[0.03] border border-white/5 rounded-xl sm:rounded-2xl group hover:border-white/20 transition-all"
+                        >
+                          <div className="flex items-center gap-2 sm:gap-3">
+                            <ExchangeLogo exchange={ex.includes('Binance') ? 'Binance' : 'Bybit'} size="w-8 h-5 sm:w-10 sm:h-6" />
+                            <div className="flex flex-col">
+                              <span className="text-[10px] sm:text-[12px] font-bold text-white uppercase tracking-tight">{ex.split(' ')[0]}</span>
+                              <span className="text-[8px] sm:text-[9px] font-black text-white/40 uppercase tracking-widest">{ex.split(' ')[1]}</span>
                             </div>
-                          );
-                        })}
+                          </div>
+                          <button 
+                            onClick={() => onToggleExchange(ex)}
+                            className={`relative inline-flex h-5 w-9 sm:h-6 sm:w-11 items-center rounded-full transition-all duration-300 focus:outline-none ${
+                              activeExchanges[ex] 
+                                ? 'bg-white ring-1 ring-black/5 shadow-inner' 
+                                : 'bg-zinc-800 border border-white/5'
+                            }`}
+                          >
+                            <span className={`inline-block h-3 w-3 sm:h-4 sm:w-4 transform rounded-full transition-all duration-300 ${
+                              activeExchanges[ex] 
+                                ? 'translate-x-[18px] sm:translate-x-[22px] bg-zinc-500 shadow-[0_2px_10px_rgba(0,0,0,0.1)]' 
+                                : 'translate-x-1 bg-white/20'
+                            }`} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
+                </div>
+
+                <div className="flex flex-col landscape:flex-row md:flex-row gap-6 md:gap-10 lg:gap-16">
+                  {(['SPOT', 'FUTURES'] as MarketType[]).map(type => (
+                    <div key={type} className="flex-1 flex flex-col">
+                      <div className="flex flex-col gap-3 sm:gap-4 max-md:landscape:gap-2 mb-4 sm:mb-6 max-md:landscape:mb-2">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 sm:gap-3">
+                            <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full shadow-[0_0_10px_currentColor] ${type === 'SPOT' ? 'text-[#00ffa3] bg-[#00ffa3]' : 'text-[#ff9900] bg-[#ff9900]'}`} />
+                            <div className="text-[11px] sm:text-[13px] font-black uppercase tracking-[0.2em] sm:tracking-[0.4em] text-white">
+                              {type === 'SPOT' ? t.spot : t.futures}
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => onResetSettings(type)} 
+                            className="text-white/20 hover:text-white transition-all hover:rotate-180 duration-500"
+                          >
+                            <RotateCcw size={14} className="sm:size-[16px]" />
+                          </button>
+                        </div>
+
+                        {/* Notification Block */}
+                        <div className={`flex items-center justify-between p-3 sm:p-4 max-md:landscape:p-2 rounded-xl sm:rounded-2xl border transition-all duration-300 ${
+                          (type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled)
+                            ? 'bg-white border-white shadow-[0_10px_20px_rgba(255,255,255,0.1)] sm:shadow-[0_20px_40px_rgba(255,255,255,0.15)] scale-[1.01] sm:scale-[1.02]'
+                            : 'bg-white/5 border-white/10'
+                        }`}>
+                          <div className="flex items-center gap-2 sm:gap-3">
+                            <BellRing 
+                              size={16} 
+                              className={(type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled) 
+                                ? 'text-amber-400 animate-bounce' 
+                                : 'text-white/30'} 
+                            />
+                            <span className={`text-[8px] sm:text-[10px] font-black uppercase tracking-widest transition-colors ${
+                              (type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled)
+                                ? 'text-black'
+                                : 'text-white/40'
+                            }`}>
+                              {t.density_notification}
+                            </span>
+                          </div>
+                          <button 
+                            onClick={() => handleAlarmToggle(type)}
+                            className={`relative inline-flex h-5 w-9 sm:h-6 sm:w-11 items-center rounded-full transition-all duration-300 focus:outline-none ${
+                              (type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled) 
+                                ? 'bg-white ring-1 ring-black/5 shadow-inner' 
+                                : 'bg-zinc-800 border border-white/5'
+                            }`}
+                          >
+                            <span className={`inline-block h-3 w-3 sm:h-4 sm:w-4 transform rounded-full transition-all duration-300 ${
+                              (type === 'SPOT' ? spotSettings.soundAlertEnabled : futuresSettings.soundAlertEnabled) 
+                                ? 'translate-x-[18px] sm:translate-x-[22px] bg-zinc-500 shadow-[0_2px_10px_rgba(0,0,0,0.1)]' 
+                                : 'translate-x-1 bg-white/20'
+                            }`} />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-0">
+                        <div className="flex items-center justify-between py-3 sm:py-5 max-md:landscape:py-1 border-b border-white/5 group">
+                          <div className="flex flex-col">
+                            <label className="text-[9px] sm:text-[11px] text-white uppercase font-bold tracking-wider group-hover:text-white/70 transition-colors">
+                              {settingLabels.peerMultiplier}
+                            </label>
+                          </div>
+                          <div className="flex flex-col items-end gap-1 w-32 sm:w-56">
+                            <div className="relative w-full pt-3 pb-3">
+                              <input 
+                                type="range"
+                                min="1"
+                                max="5"
+                                step="1"
+                                value={getDominationSliderVal(type === 'SPOT' ? spotSettings.peerMultiplier : futuresSettings.peerMultiplier)}
+                                onChange={(e) => {
+                                  const sliderVal = parseInt(e.target.value);
+                                  const mappedVal = DOMINATION_MAP[sliderVal];
+                                  onSettingChange(type, 'peerMultiplier', mappedVal.toString());
+                                }}
+                                className="w-full h-0.5 sm:h-1 bg-white/10 rounded-lg appearance-none cursor-pointer relative z-10
+                                  [&::-webkit-slider-thumb]:appearance-none 
+                                  [&::-webkit-slider-thumb]:w-3 sm:[&::-webkit-slider-thumb]:w-4 
+                                  [&::-webkit-slider-thumb]:h-3 sm:[&::-webkit-slider-thumb]:h-4 
+                                  [&::-webkit-slider-thumb]:rounded-full 
+                                  [&::-webkit-slider-thumb]:bg-black 
+                                  [&::-webkit-slider-thumb]:border-2 
+                                  [&::-webkit-slider-thumb]:border-zinc-500
+                                  hover:[&::-webkit-slider-thumb]:border-zinc-400
+                                  [&::-webkit-slider-thumb]:shadow-[0_0_10px_rgba(0,0,0,0.3)]
+                                  [&::-webkit-slider-thumb]:transition-all"
+                              />
+                              {/* Ticks & Numbers Above */}
+                              <div className="absolute top-0 left-0 w-full pointer-events-none flex justify-between px-0.5">
+                                {[1, 2, 3, 4, 5].map(v => (
+                                  <div key={v} className="flex flex-col items-center justify-end h-3 sm:h-4">
+                                    <span className={`text-[9px] sm:text-[11px] mb-0.5 font-black transition-colors ${getDominationSliderVal(type === 'SPOT' ? spotSettings.peerMultiplier : futuresSettings.peerMultiplier) === v ? 'text-white' : 'text-white/20'}`}>
+                                      {v}
+                                    </span>
+                                    <div className={`w-[0.5px] sm:w-[1px] h-0.5 sm:h-1 ${getDominationSliderVal(type === 'SPOT' ? spotSettings.peerMultiplier : futuresSettings.peerMultiplier) === v ? 'bg-purple-500' : 'bg-white/20'}`} />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="text-[8px] sm:text-[10px] font-black uppercase text-white underline decoration-white/40 underline-offset-4 shadow-[0_0_10px_rgba(255,255,255,0.2)] text-right leading-none -mt-1 sm:-mt-2">
+                              {(() => {
+                                const val = getDominationSliderVal(type === 'SPOT' ? spotSettings.peerMultiplier : futuresSettings.peerMultiplier);
+                                return val === 1 ? t.density_weak :
+                                       val === 2 ? t.density_medium :
+                                       val === 3 ? t.density_normal :
+                                       val === 4 ? t.density_good :
+                                       t.density_strong;
+                                })()}
+                            </div>
+                          </div>
+                        </div>
+
+                        {Object.keys(type === 'SPOT' ? spotSettings : futuresSettings)
+                          .filter(k => ['minDensityVolume', 'distancePercentage'].includes(k))
+                          .map((key, idx, arr) => {
+                            const rawVal = type === 'SPOT' ? (spotSettings as any)[key] : (futuresSettings as any)[key];
+                            // Formatting only for Volume fields (exclude percentage)
+                            const displayVal = key === 'minDensityVolume'
+                              ? rawVal.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ') 
+                              : rawVal;
+                            
+                            return (
+                              <div key={key} className={`flex items-center justify-between py-3 sm:py-5 max-md:landscape:py-1 ${idx !== arr.length - 1 ? 'border-b border-white/5' : ''} group`}>
+                                <div className="flex flex-col">
+                                  <label className="text-[9px] sm:text-[11px] text-white uppercase font-bold tracking-wider group-hover:text-white/70 transition-colors">
+                                    {(settingLabels as any)[key]}
+                                  </label>
+                                </div>
+                                <input 
+                                  className="w-20 sm:w-36 bg-[#151515] border border-white/10 rounded-xl sm:rounded-2xl text-[11px] sm:text-[13px] px-3 sm:px-4 py-2 sm:py-2.5 text-right focus:border-white/30 focus:bg-[#1a1a1a] outline-none font-mono text-white transition-all shadow-inner" 
+                                  value={displayVal} 
+                                  onChange={(e) => {
+                                    const val = e.target.value.replace(/\s/g, '');
+                                    onSettingChange(type, key as any, val);
+                                  }} 
+                                />
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -596,7 +692,7 @@ const Table: React.FC<{
       </div>
 
       <div className="p-4 lg:p-6 z-[10] min-h-0">
-        <div className="grid gap-6 lg:gap-8 pb-20 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 mobile-landscape-2-col">
+        <div className="grid gap-6 lg:gap-8 pb-32 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 mobile-landscape-2-col">
           {sortedData.map((row) => (
             <DensityCard 
               key={row.id} 
@@ -608,12 +704,47 @@ const Table: React.FC<{
             />
           ))}
           {sortedData.length === 0 && (
-            <div className="col-span-full h-[500px] flex flex-col items-center justify-center -mt-32 text-zinc-500/30 font-black text-[18px] sm:text-[24px] md:text-[32px] lg:text-[48px] text-center max-w-6xl mx-auto gap-8 lg:gap-12 px-6 lg:px-10">
-               <div className="leading-[1.2] uppercase [word-spacing:0.3em] lg:[word-spacing:0.5em] tracking-tight relative whitespace-pre-line">
-                 {t.searching_anomalies}
-                 <BellRing className="inline-block ml-3 lg:ml-6 text-white -mt-1 lg:-mt-2 align-middle w-5 h-5 sm:w-7 sm:h-7 md:w-8 md:h-8 lg:w-10 lg:h-10 shadow-[0_0_20px_rgba(255,255,255,0.3)]" />
-               </div>
-               <div className="w-10 h-10 lg:w-12 lg:h-12 border-2 border-white/5 border-t-purple-500/50 rounded-full animate-spin"></div>
+            <div className="col-span-full h-[600px] flex flex-col items-center justify-center -mt-20">
+              <div className="text-center space-y-10 max-w-2xl px-6">
+                <div className="relative">
+                  <div className="w-24 h-24 rounded-full border border-white/5 flex items-center justify-center mx-auto">
+                     <div className="w-16 h-16 rounded-full border-t border-purple-500 animate-spin" />
+                  </div>
+                  <div className="absolute inset-0 bg-purple-500/20 blur-3xl rounded-full scale-150 animate-pulse" />
+                </div>
+                
+                <div className="space-y-6">
+                  <h2 className="text-xl sm:text-2xl font-black text-white tracking-[0.2em] uppercase leading-tight whitespace-pre-line text-center">
+                    {t.searching_anomalies}
+                    <div className="relative group/search-info inline-flex align-middle ml-4">
+                      <div 
+                        onClick={() => setIsInfoTooltipOpen(!isInfoTooltipOpen)}
+                        className={`w-10 h-10 rounded-full border flex items-center justify-center cursor-pointer transition-all bg-white/5 ${isInfoTooltipOpen ? 'border-white/60 text-white bg-white/10' : 'border-white/20 text-white/40 hover:border-white/60 hover:text-white'}`}
+                      >
+                        <Info size={20} />
+                      </div>
+                      <div className={`absolute left-1/2 bottom-full mb-4 -translate-x-1/2 w-64 md:w-80 p-5 bg-[#0d0d1a]/95 backdrop-blur-xl border border-white/10 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] transition-all duration-300 z-[1000000] ring-1 ring-white/5 
+                        ${isInfoTooltipOpen 
+                          ? 'opacity-100 visible translate-y-0 pointer-events-auto' 
+                          : 'opacity-0 invisible translate-y-2 pointer-events-none group-hover/search-info:opacity-100 group-hover/search-info:visible group-hover/search-info:translate-y-0 group-hover/search-info:pointer-events-auto'
+                        }`}
+                      >
+                        <div className="flex flex-col">
+                          <p className="text-[12px] font-medium leading-relaxed text-gray-400 normal-case tracking-normal text-left">
+                            {t.screener_tooltip_body}
+                          </p>
+                        </div>
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-[#0d0d1a]" />
+                      </div>
+                    </div>
+                  </h2>
+                  <div className="flex items-center justify-center gap-4">
+                    <div className="h-px w-12 bg-white/10" />
+                    <BellRing className="text-white w-6 h-6 animate-pulse" />
+                    <div className="h-px w-12 bg-white/10" />
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>

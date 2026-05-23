@@ -3,26 +3,29 @@ import React from 'react';
 
 export const Logo: React.FC<{ animate?: boolean; size?: 'sm' | 'md' | 'lg' | 'xl'; hideText?: boolean; textBreakpoint?: string; noShadow?: boolean }> = ({ animate, size = 'md', hideText = false, textBreakpoint = 'md', noShadow = false }) => {
   const isLarge = size === 'lg' || size === 'xl';
-  const containerClass = isLarge ? "flex flex-col items-center gap-4" : "flex items-center gap-4";
-  const logoUrl = "https://preview.redd.it/6ot8qxpia8vg1.png?auto=webp&s=fd5ccf0012e310775af0fc0f189a33f8efb9d753";
+  const containerClass = isLarge ? "flex flex-col items-center gap-4" : "flex items-center gap-3";
+  const logoUrl = "/favicon.png";
   
   return (
     <div className={`${containerClass} cursor-pointer select-none group`}>
-      <div className={`${size === 'xl' ? 'w-36 h-36' : isLarge ? 'w-48 h-48' : 'w-12 h-12'} relative flex items-center justify-center transition-transform duration-500 group-hover:scale-110`}>
+      <div className={`${size === 'xl' ? 'w-36 h-36' : size === 'lg' ? 'w-48 h-48' : size === 'md' ? 'w-14 h-14' : 'w-11 h-11'} relative flex items-center justify-center transition-transform duration-500 group-hover:scale-110`}>
         <img 
           src={logoUrl} 
           alt="SmartEye Logo" 
           className={`w-full h-full object-contain ${!noShadow ? 'drop-shadow-[0_0_15px_rgba(139,92,246,0.3)]' : ''} ${animate ? 'animate-pulse' : ''}`}
           referrerPolicy="no-referrer"
+          fetchPriority="high"
+          loading="eager"
+          decoding="async"
         />
       </div>
 
       {!hideText && (
         <div className={`flex flex-col ${isLarge ? 'items-center text-center mt-6' : 'items-start'} leading-none`}>
-          <span className={`${size === 'xl' ? 'text-4xl' : isLarge ? 'text-6xl' : 'text-xl'} font-rajdhani font-bold tracking-[0.2em] text-white uppercase`}>
-            SmartEye
+          <span className={`${size === 'xl' ? 'text-4xl' : size === 'lg' ? 'text-6xl' : size === 'md' ? 'text-xl' : 'text-lg'} font-rajdhani font-bold tracking-[0.2em] text-white uppercase`}>
+            SMARTEYE
           </span>
-          <span className={`${size === 'xl' ? 'text-[10px] mt-2' : isLarge ? 'text-xs mt-4' : 'text-[9px]'} font-mono text-gray-500 tracking-[0.8em] uppercase font-black`}>
+          <span className={`${size === 'xl' ? 'text-[10px] mt-2' : isLarge ? 'text-xs mt-4' : size === 'md' ? 'text-[10px]' : 'text-[9px]'} font-mono text-gray-400 tracking-[0.8em] uppercase font-black`}>
             Crypto Screener
           </span>
         </div>

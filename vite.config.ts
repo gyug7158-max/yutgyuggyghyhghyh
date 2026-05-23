@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
         'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.VITE_TELEGRAM_BOT_USERNAME': JSON.stringify(env.VITE_TELEGRAM_BOT_USERNAME || 'smarteye_screener_bot'),
+        'process.env.VITE_TELEGRAM_BOT_USERNAME': JSON.stringify(env.VITE_TELEGRAM_BOT_USERNAME || 'smarteyecrypto_bot'),
       },
       resolve: {
         alias: {

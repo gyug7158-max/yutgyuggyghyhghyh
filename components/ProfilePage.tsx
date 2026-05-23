@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { User, Mail, Calendar, CheckCircle, Star, Link as LinkIcon, ExternalLink, Shield, MessageCircle, ArrowLeft, Copy, BookOpen, Users, Check, Globe, CreditCard, Bitcoin, Zap, CircleDot, Lock, LogOut, Search, FileText, ChevronRight, Wallet, MousePointerClick, TrendingUp, Clock, Info, AlertCircle, RotateCcw, History as HistoryIcon, Send, CheckCircle2, Headset, Activity, Bell, PlayCircle, LayoutGrid, BrainCircuit } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { User, Mail, Calendar, CheckCircle, Star, Link as LinkIcon, ExternalLink, Shield, MessageCircle, ArrowLeft, Copy, BookOpen, Users, Check, Globe, CreditCard, Bitcoin, Zap, CircleDot, Lock, LogOut, Search, FileText, ChevronRight, Wallet, MousePointerClick, TrendingUp, Clock, Info, AlertCircle, RotateCcw, ArrowLeftRight, History as HistoryIcon, Send, CheckCircle2, Headset, Activity, Bell, PlayCircle, LayoutGrid, BrainCircuit, Loader2, DollarSign } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import confetti from 'canvas-confetti';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
@@ -11,22 +11,23 @@ import { LegalModal } from './UI/LegalModal';
 import { partnerService, ReferralData, EarningReport } from '../services/partner.service';
 import { apiService } from '../services/api.service';
 import { supportService } from '../services/support.service';
-import { DBUser, PremiumPurchase, Referral, SupportMessage } from '../models';
+import { DBUser, PremiumPurchase, Referral, SupportMessage, EarningsSummary } from '../models';
 
 interface ProfilePageProps {
   onBack: (tab?: 'screener' | 'market') => void;
   onLogout: () => void;
   language: Language;
-  avatarTier: 'free' | '1month' | '3months' | '1year';
-  setAvatarTier: (tier: 'free' | '1month' | '3months' | '1year') => void;
+  avatarTier: 'free' | '1month' | '6months' | '1year';
+  setAvatarTier: (tier: 'free' | '1month' | '6months' | '1year') => void;
   subscriptionTier: 'free' | 'pro' | 'whale';
   setSubscriptionTier: (tier: 'free' | 'pro' | 'whale') => void;
   premiumEndDate: string;
   setPremiumEndDate: (date: string) => void;
   dbUser: DBUser | null;
   initialTab?: 'profile' | 'subscription' | 'affiliate' | 'guide';
-  initialPlan?: '1month' | '3months' | '1year';
+  initialPlan?: '1month' | '6months' | '1year';
   refreshUser: () => Promise<void>;
+  showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 const ProfilePage: React.FC<ProfilePageProps> = ({ 
@@ -42,18 +43,76 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
   dbUser,
   initialTab = 'profile',
   initialPlan = '1year',
-  refreshUser
+  refreshUser,
+  showToast
 }) => {
+  const [isLandscape, setIsLandscape] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+  const [isNavVisible, setIsNavVisible] = useState(true);
+  const navTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const resetNavTimeout = useCallback(() => {
+    if (isLandscape) {
+      setIsNavVisible(true);
+      if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
+      navTimeoutRef.current = setTimeout(() => {
+        setIsNavVisible(false);
+      }, 3000); // 3 seconds of idle to hide
+    } else {
+      setIsNavVisible(true);
+    }
+  }, [isLandscape]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsLandscape(window.innerWidth > window.innerHeight);
+      setWindowWidth(window.innerWidth);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    
+    const handleActivity = () => resetNavTimeout();
+    window.addEventListener('touchstart', handleActivity);
+    window.addEventListener('mousemove', handleActivity);
+    window.addEventListener('scroll', handleActivity);
+    
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+      if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current);
+    };
+  }, [resetNavTimeout]);
+
   const t = translations[language];
-  const [userEmail] = useState(dbUser?.email || 'user@example.com');
-  const [joinDate] = useState(dbUser ? new Date(dbUser.created_at).toLocaleDateString(language === 'ru' ? 'ru-RU' : 'en-US') : t.join_date_val);
-  const [activeTab, setActiveTab] = useState<'profile' | 'subscription' | 'affiliate' | 'guide'>(initialTab);
+  const userEmail = dbUser?.email || 'smarteyepro@mail.ru';
+  const joinDate = dbUser ? new Date(dbUser.created_at).toLocaleDateString(language === 'ru' ? 'ru-RU' : 'en-US') : t.join_date_val;
+  const [activeTab, setActiveTab] = useState<'profile' | 'subscription' | 'affiliate' | 'guide' | 'support'>(initialTab as any || 'profile');
   const [copied, setCopied] = useState(false);
   const [openAccordion, setOpenAccordion] = useState<number | null>(null);
   const [promoCode, setPromoCode] = useState('');
   const [paymentError, setPaymentError] = useState(false);
-  const [selectedPlan, setSelectedPlan] = useState<'1month' | '3months' | '1year'>(initialPlan);
+  const [selectedPlan, setSelectedPlan] = useState<'1month' | '6months' | '1year' | null>('1month');
+  const checkoutRef = useRef<HTMLDivElement>(null);
+
+  const handlePlanSelect = (plan: '1month' | '6months' | '1year') => {
+    setSelectedPlan(plan);
+    
+    // Improved scroll for mobile/tablet/landscape
+    // Since ProfilePage has its own overflow-y-auto container, window.scrollTo doesn't work.
+    // scrollIntoView is the correct way to handle nested scrollable parents.
+    setTimeout(() => {
+      if (checkoutRef.current && window.innerWidth < 1370) {
+        checkoutRef.current.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'start' 
+        });
+      }
+    }, 150);
+  };
   const [selectedMethod, setSelectedMethod] = useState<'card' | 'crypto' | 'telegram_stars' | null>(null);
+  const [isInitiatingPayment, setIsInitiatingPayment] = useState(false);
   const [userId, setUserId] = useState(dbUser?.id || `ID-${Math.floor(Math.random() * 1000000)}`);
   
   useEffect(() => {
@@ -69,10 +128,47 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
   const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
   const [supportMessage, setSupportMessage] = useState('');
   const [isSendingSupport, setIsSendingSupport] = useState(false);
+  const [isRefreshingSupport, setIsRefreshingSupport] = useState(false);
+  const [isCheckingPayment, setIsCheckingPayment] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+
+  // Ensure scroll to top on tab change, especially for mobile and tablets
+  useEffect(() => {
+    if (mainScrollRef.current) {
+      mainScrollRef.current.scrollTo({ top: 0 });
+    }
+    // Also reset window scroll and common scrollable containers just in case
+    window.scrollTo(0, 0);
+    document.querySelectorAll('.overflow-y-auto').forEach(el => {
+      el.scrollTop = 0;
+    });
+  }, [activeTab]);
+
+  // Poll for payment success if checking
+  useEffect(() => {
+    let interval: any;
+    if (isCheckingPayment) {
+      const startTier = dbUser?.subscription_tier;
+      const startEndDate = dbUser?.premium_end_date;
+
+      interval = setInterval(async () => {
+        await refreshUser();
+        
+        // If we have a dbUser and it has changed, we are done
+        if (dbUser) {
+           if (dbUser.subscription_tier !== startTier || dbUser.premium_end_date !== startEndDate) {
+              setIsCheckingPayment(false);
+              setIsPaymentSuccessOpen(true);
+           }
+        }
+      }, 3000); // Check every 3 seconds
+    }
+    return () => clearInterval(interval);
+  }, [isCheckingPayment, dbUser, refreshUser]);
 
   useEffect(() => {
-    if (isSupportModalOpen && dbUser) {
+    if ((isSupportModalOpen || activeTab === 'support') && dbUser) {
       supportService.initialize(dbUser.id);
       const sub = supportService.messages$.subscribe(msgs => {
         setSupportMessages(msgs);
@@ -87,7 +183,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
         supportService.disconnect();
       };
     }
-  }, [isSupportModalOpen, dbUser]);
+  }, [isSupportModalOpen, activeTab, dbUser]);
 
   const handleSendSupport = async () => {
     if (!dbUser || !supportMessage.trim() || isSendingSupport) return;
@@ -97,7 +193,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
       setSupportMessage('');
     } catch (err: any) {
       console.error('Support send error:', err);
-      alert(language === 'ru' ? `Ошибка при отправке: ${err.message}` : `Send error: ${err.message}`);
+      showToast(language === 'ru' ? `Ошибка при отправке: ${err.message}` : `Send error: ${err.message}`, 'error');
     } finally {
       setIsSendingSupport(false);
     }
@@ -106,13 +202,21 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
   // Partner Data States
   const [premiumHistory, setPremiumHistory] = useState<PremiumPurchase[]>([]);
   const [referrals, setReferrals] = useState<Referral[]>([]);
-  const [earningsSummary, setEarningsSummary] = useState({ total_earnings: 25.0, total_withdrawn: 0, available_balance: 25.0 });
+  const [earningsSummary, setEarningsSummary] = useState<EarningsSummary>({ 
+    total_earnings: 0, 
+    total_withdrawn: 0, 
+    available_balance: 0, 
+    paid_referrals_pending: 0,
+    total_clicks: 0,
+    last_withdraw_date: null,
+    total_system_income: 0
+  });
   const [isLoadingPartnerData, setIsLoadingPartnerData] = useState(false);
   const [partnerError, setPartnerError] = useState<string | null>(null);
 
   // Fetch Partner Data
   useEffect(() => {
-    if (activeTab === 'affiliate' && dbUser) {
+    if ((activeTab === 'affiliate' || activeTab === 'profile') && dbUser) {
       const fetchPartnerData = async () => {
         setIsLoadingPartnerData(true);
         setPartnerError(null);
@@ -143,19 +247,111 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
     }
   }, [premiumEndDate, t.no_active_subscription, setPremiumEndDate]);
 
-  const handlePayment = () => {
-    if (!selectedMethod) {
+  const handlePayment = async () => {
+    if (!selectedPlan) {
+      showToast(language === 'ru' ? 'Выберите тарифный план' : 'Please select a subscription plan', 'error');
       setPaymentError(true);
       return;
     }
+    
+    if (!selectedMethod || isInitiatingPayment) {
+      if (!selectedMethod) setPaymentError(true);
+      return;
+    }
+    setIsInitiatingPayment(true);
     setPaymentError(false);
+    
+    // Add small delay to prevent rapid clicks
+    setTimeout(() => setIsInitiatingPayment(false), 2000);
 
+    if (selectedMethod === 'crypto') {
+      if (!dbUser) {
+        showToast(language === 'ru' ? 'Сначала войдите в аккаунт' : 'Login first', 'error');
+        return;
+      }
+      
+      setIsInitiatingPayment(true);
+      
+      try {
+        const { url } = await apiService.createHeleketPayment({
+          userId: dbUser.id,
+          plan: selectedPlan,
+          amount: plans[selectedPlan as keyof typeof plans].price
+        });
+        
+        showToast(language === 'ru' ? 'Перенаправление на Heleket...' : 'Redirecting to Heleket...', 'info');
+        
+        // Open in same window or new tab depending on mobile/iframe constraints
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        try {
+          a.click();
+        } catch (err) {
+          window.location.href = url;
+        }
+        document.body.removeChild(a);
+      } catch (err) {
+        console.error('Heleket payment initiation failed:', err);
+        showToast(language === 'ru' ? 'Ошибка запуска оплаты' : 'Payment initiation failed', 'error');
+        setPaymentError(true);
+      } finally {
+        setIsInitiatingPayment(false);
+      }
+      return;
+    }
+
+    if (selectedMethod === 'card') {
+      if (!dbUser) {
+        showToast(language === 'ru' ? 'Сначала войдите в аккаунт' : 'Login first', 'error');
+        return;
+      }
+      
+      setIsInitiatingPayment(true);
+      
+      try {
+        const { url } = await apiService.createYookassaPayment({
+          userId: dbUser.id,
+          plan: selectedPlan,
+          amount: plans[selectedPlan as keyof typeof plans].price
+        });
+        
+        showToast(language === 'ru' ? 'Перенаправление на ЮKassa...' : 'Redirecting to YooKassa...', 'info');
+        
+        // Use a link element for reliable redirection
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        try {
+          a.click();
+        } catch (err) {
+          window.location.href = url;
+        }
+        document.body.removeChild(a);
+        
+        setIsCheckingPayment(true);
+      } catch (err: any) {
+        console.error('Yookassa payment initiation failed:', err);
+        showToast(language === 'ru' ? `Ошибка запуска оплаты: ${err.message}` : `Payment initiation failed: ${err.message}`, 'error');
+        setPaymentError(true);
+      } finally {
+        setIsInitiatingPayment(false);
+      }
+      return;
+    }
+    
     if (selectedMethod === 'telegram_stars') {
-      const rawBotUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || (process.env as any).VITE_TELEGRAM_BOT_USERNAME || 'smarteye_screener_bot';
+      const rawBotUsername = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || (process.env as any).VITE_TELEGRAM_BOT_USERNAME || 'smarteyecrypto_bot';
       const botUsername = rawBotUsername.replace('@', '');
       const deepLink = `https://t.me/${botUsername}?start=pay_${userId}_${selectedPlan}`;
       
       console.log('Initiating Telegram payment:', { botUsername, userId, selectedPlan, deepLink });
+
+      setIsCheckingPayment(true);
 
       // Use a link element for more reliable redirection in iframes/mobile
       const a = document.createElement('a');
@@ -183,7 +379,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
     
     // Save to DB
     if (dbUser) {
-      const months = selectedPlan === '1month' ? 1 : selectedPlan === '3months' ? 3 : 12;
+      const months = selectedPlan === '1month' ? 1 : selectedPlan === '6months' ? 6 : 12;
       apiService.simulatePurchase({
         userId: dbUser.id,
         planTier: selectedPlan === '1year' ? 'whale' : 'pro',
@@ -227,7 +423,17 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
     setIsPaymentSuccessOpen(true);
   };
 
-  const avatarTiers: ('free' | '1month' | '3months' | '1year')[] = ['free', '1month', '3months', '1year'];
+  const avatarTiers: ('free' | '1month' | '6months' | '1year')[] = ['free', '1month', '6months', '1year'];
+
+  const getEndDate = (months: number) => {
+    const d = new Date();
+    d.setMonth(d.getMonth() + months);
+    return d.toLocaleDateString(language === 'ru' ? 'ru-RU' : 'en-US', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+  };
 
   const plans = {
     '1month': {
@@ -235,75 +441,79 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
       name: t.plan_1month,
       period: t.plan_1month,
       price: 19,
-      starsPrice: 100,
+      starsPrice: 1520,
       displayPrice: '$19',
       originalPrice: '$25',
       discount: '24%',
-      endDate: language === 'ru' ? '27 апреля 2026 г.' : 'April 27, 2026'
+      endDate: getEndDate(1)
     },
-    '3months': {
-      id: '3months',
-      name: t.plan_3months,
-      period: t.plan_3months,
-      price: 49,
-      starsPrice: 250,
-      displayPrice: '$49',
-      originalPrice: '$75',
-      discount: '35%',
-      endDate: language === 'ru' ? '27 июня 2026 г.' : 'June 27, 2026'
+    '6months': {
+      id: '6months',
+      name: t.plan_6months,
+      period: t.plan_6months,
+      price: 89,
+      starsPrice: 7120,
+      displayPrice: '$89',
+      originalPrice: '$150',
+      discount: '41%',
+      endDate: getEndDate(6)
     },
     '1year': {
       id: '1year',
       name: t.plan_1year,
       period: t.plan_1year,
       price: 174,
-      starsPrice: 900,
+      starsPrice: 13920,
       displayPrice: '$174',
       originalPrice: '$300',
       discount: '42%',
-      endDate: language === 'ru' ? '27 марта 2027 г.' : 'March 27, 2027'
+      endDate: getEndDate(12)
     }
   };
 
-  const referralLink = `https://smarteye.app/ref/${dbUser?.id || userId}`;
+  const referralLink = `https://smarteyepro.com/?ref=${dbUser?.id || userId}`;
 
   const [withdrawAddress, setWithdrawAddress] = useState('');
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [isWithdrawing, setIsWithdrawing] = useState(false);
-  const [activeStatsTab, setActiveStatsTab] = useState<'clicks' | 'referrals' | 'unpaid' | 'paid' | 'income' | 'premium_history' | null>(null);
+  const [activeStatsTab, setActiveStatsTab] = useState<'clicks' | 'referrals' | 'unpaid' | 'paid' | 'income' | 'premium_history' | 'system_income' | 'paid_pending' | null>(null);
   const [chartTimeframe, setChartTimeframe] = useState<'1m' | '6m' | '1y'>('1m');
 
   useEffect(() => {
     if (activeStatsTab) {
       const element = document.getElementById('stats-details');
       if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
   }, [activeStatsTab]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('payment') === 'success') {
+      showToast(language === 'ru' ? 'Оплата прошла успешно! Подписка активируется...' : 'Payment successful! Activating subscription...', 'success');
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+      setTimeout(refreshUser, 3000);
+    } else if (params.get('payment') === 'fail') {
+      showToast(language === 'ru' ? 'Ошибка при оплате' : 'Payment failed', 'error');
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+    }
+  }, [language, refreshUser, showToast]);
+
   const commissionRates = [
     { tier: language === 'ru' ? '1 Месяц' : '1 Month', price: 19, commission: 3.80 },
-    { tier: language === 'ru' ? '3 Месяца' : '3 Months', price: 49, commission: 9.80 },
-    { tier: language === 'ru' ? '1 Год' : '1 Year', price: 149, commission: 29.80 },
+    { tier: language === 'ru' ? '6 Месяцев' : '6 Months', price: 89, commission: 17.80 },
+    { tier: language === 'ru' ? '1 Год' : '1 Year', price: 174, commission: 34.80 },
   ];
 
   const getDynamicChartData = () => {
     const data = [];
     const now = new Date();
-    let points = 7;
+    let points = 8;
     let daysBack = 30;
 
-    if (chartTimeframe === '1m') {
-      points = 8;
-      daysBack = 30;
-    } else if (chartTimeframe === '6m') {
-      points = 8;
-      daysBack = 180;
-    } else if (chartTimeframe === '1y') {
-      points = 8;
-      daysBack = 365;
-    }
+    if (chartTimeframe === '6m') daysBack = 180;
+    else if (chartTimeframe === '1y') daysBack = 365;
 
     const step = Math.floor(daysBack / (points - 1));
 
@@ -315,9 +525,9 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
       
       data.push({
         name: `${day}.${month}`,
-        clicks: Math.floor(Math.random() * 50) + 10,
-        referrals: Math.floor(Math.random() * 5),
-        income: Math.floor(Math.random() * 40) + 5,
+        clicks: 0,
+        referrals: 0,
+        income: 0,
       });
     }
     return data;
@@ -325,13 +535,19 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
 
   const dynamicChartData = getDynamicChartData();
 
-  const paymentHistory = [
-    { date: '01.04.2026', amount: '$35.00', status: language === 'ru' ? 'Выполнено' : 'Completed' },
-    { date: '15.03.2026', amount: '$22.50', status: language === 'ru' ? 'Выполнено' : 'Completed' },
-    { date: '01.03.2026', amount: '$48.00', status: language === 'ru' ? 'Выполнено' : 'Completed' },
-  ];
+  const paymentHistory: any[] = [];
 
-  const lastWithdrawDate = paymentHistory[0].date;
+  const getFormattedDate = (dateStr: string | null, fallback: string = '--.--.----') => {
+    if (!dateStr) return fallback;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return fallback;
+    return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  };
+
+  const lastWithdrawDate = earningsSummary.total_withdrawn > 0 
+    ? getFormattedDate(earningsSummary.last_withdraw_date)
+    : '';
+    
   const todayDate = new Date().toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
   const handleWithdraw = async () => {
@@ -367,7 +583,19 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
       setIsWithdrawing(false);
       setWithdrawAddress('');
       setWithdrawAmount('');
-      alert(language === 'ru' ? 'Заявка на вывод создана и сохранена в базе!' : 'Withdrawal request created and saved to database!');
+      alert(language === 'ru' ? 'Заявка на вывод создана и будет обработана' : 'Withdrawal request created and will be processed');
+      
+      // Refresh partner data to update balance
+      setIsLoadingPartnerData(true);
+      Promise.all([
+        apiService.getPremiumHistory(dbUser.id),
+        apiService.getReferrals(dbUser.id),
+        apiService.getEarningsSummary(dbUser.id)
+      ]).then(([history, refs, summary]) => {
+        setPremiumHistory(history);
+        setReferrals(refs);
+        setEarningsSummary(summary);
+      }).finally(() => setIsLoadingPartnerData(false));
     } catch (error) {
       console.error('Withdrawal request failed:', error);
       setIsWithdrawing(false);
@@ -381,11 +609,11 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const isTierLocked = (tier: 'free' | '1month' | '3months' | '1year') => {
+  const isTierLocked = (tier: 'free' | '1month' | '6months' | '1year') => {
     if (tier === 'free') return false;
     if (subscriptionTier === 'free') return true;
     if (subscriptionTier === 'pro') {
-      return tier === '1year'; // Pro gets 1month and 3months
+      return tier === '1year'; // Pro gets 1month and 6months
     }
     return false; // Whale gets everything
   };
@@ -400,79 +628,71 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
 
   return (
     <>
-      <div className="flex-1 overflow-y-auto bg-black text-white relative font-sans selection:bg-purple-500/30 custom-scroll">
+      <div ref={mainScrollRef} className="flex-1 overflow-x-hidden overflow-y-auto bg-black text-white relative font-sans selection:bg-purple-500/30 custom-scroll">
       <div className="fixed top-[-20%] left-[-10%] w-[50%] h-[50%] bg-purple-900/10 rounded-full blur-[120px] pointer-events-none" />
       <div className="fixed bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-blue-900/05 rounded-full blur-[120px] pointer-events-none" />
 
-      <div className="relative z-10 px-4 md:px-12 lg:px-20 py-4 flex items-center justify-between border-b border-white/5 bg-black/50 backdrop-blur-md sticky top-0">
-        <div className="flex items-center gap-4">
+      <div className="relative z-10 px-4 md:px-4 lg:px-20 py-1.5 sm:py-4 landscape:py-0.5 flex items-center justify-between border-b border-white/5 bg-black/50 backdrop-blur-md sticky top-0">
+        <div className="flex items-center gap-2 sm:gap-4 lg:w-full">
           <button onClick={() => onBack()} className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors group">
-            <div className="p-2 rounded-full bg-white/5 group-hover:bg-white/10 transition-all"><ArrowLeft size={18} /></div>
+            <div className="p-0.5 sm:p-1.5 lg:p-2 rounded-full bg-white/5 group-hover:bg-white/10 transition-all"><ArrowLeft size={14} className="sm:w-[16px] sm:h-[16px] lg:w-[18px] lg:h-[18px]" /></div>
           </button>
-          <div className="h-6 w-px bg-white/10 mx-2 hidden md:block"></div>
           
-          <div className="hidden md:flex items-center gap-1 bg-[#0c0c0e]/60 p-1.5 rounded-full border border-white/5 shadow-inner backdrop-blur-xl">
+          <div className="h-6 w-px bg-white/10 mx-0.5 md:mx-1 hidden md:block"></div>
+          
+          <div className="hidden md:flex items-center bg-white/[0.02] p-1 rounded-xl border border-white/5 lg:flex-1">
             {[
               { id: 'profile', label: t.profile, icon: User },
               { id: 'subscription', label: t.subscription, icon: Star },
               { id: 'affiliate', label: t.affiliate, icon: Users },
               { id: 'guide', label: t.guide, icon: BookOpen },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center gap-2.5 px-5 py-2 rounded-full text-[10px] font-bold uppercase tracking-[0.1em] transition-all duration-500 backdrop-blur-md ${
-                  activeTab === tab.id
-                    ? 'bg-white/10 text-white border border-white/10 shadow-lg'
-                    : 'bg-white/[0.03] text-gray-500 hover:text-gray-300 hover:bg-white/[0.08] border border-white/5'
-                }`}
-              >
-                <tab.icon size={14} strokeWidth={2.5} className={activeTab === tab.id ? 'text-white' : 'text-gray-500'} />
-                <span className="whitespace-nowrap">{tab.label}</span>
-              </button>
+              { id: 'support', label: t.support, icon: Headset },
+            ].map((tab, idx) => (
+              <React.Fragment key={tab.id}>
+                {idx > 0 && <div className="w-[1px] h-4 bg-white/10 mx-1 lg:mx-2 shrink-0" />}
+                <button
+                  onClick={() => {
+                    setActiveTab(tab.id as any);
+                  }}
+                  className={`flex items-center gap-2 px-3 xl:px-6 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all lg:flex-1 lg:justify-center border group ${
+                    activeTab === tab.id
+                      ? 'bg-white/12 text-white border-white/15 shadow-[0_4px_20px_rgba(255,255,255,0.05)]'
+                      : 'bg-transparent text-white/60 hover:text-white/90 border-transparent hover:bg-white/[0.03]'
+                  }`}
+                >
+                  {tab.id === 'subscription' ? (
+                    <img 
+                      src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
+                      alt=""
+                      className={`w-5 h-5 flex-shrink-0 transition-all duration-300 drop-shadow-[0_0_8px_rgba(250,204,21,0.4)] ${activeTab === tab.id ? 'scale-125 brightness-125' : 'opacity-85 group-hover:opacity-100 group-hover:scale-110'}`} 
+                    />
+                  ) : (
+                    <tab.icon size={14} className={activeTab === tab.id ? 'text-white' : 'text-white/60 group-hover:text-white/95'} />
+                  )}
+                  <span className="whitespace-nowrap">{tab.label}</span>
+                </button>
+              </React.Fragment>
             ))}
           </div>
 
-          {/* Mobile Navigation */}
-          <div className="grid md:hidden grid-cols-2 gap-1 bg-[#0c0c0e]/60 p-1 rounded-2xl border border-white/5 backdrop-blur-xl w-full landscape:flex landscape:md:hidden landscape:flex-nowrap landscape:rounded-full landscape:w-auto overflow-x-auto no-scrollbar">
-            {[
-              { id: 'profile', label: t.profile, icon: User },
-              { id: 'subscription', label: t.subscription, icon: Star },
-              { id: 'affiliate', label: t.affiliate, icon: Users },
-              { id: 'guide', label: t.guide, icon: BookOpen },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl landscape:rounded-full text-[9px] font-bold uppercase tracking-wider transition-all ${
-                  activeTab === tab.id
-                    ? 'bg-white/10 text-white border border-white/10 shadow-lg'
-                    : 'bg-white/[0.03] text-gray-500 hover:bg-white/10 border border-white/5'
-                }`}
-              >
-                <tab.icon size={12} className={activeTab === tab.id ? 'text-white' : 'text-gray-500'} />
-                <span className="whitespace-nowrap">{tab.label}</span>
-              </button>
-            ))}
-          </div>
         </div>
       </div>
 
-      <div className="relative z-10 max-w-[1400px] mx-auto px-4 md:px-12 lg:px-20 py-8">
-        <div className="space-y-6">
+      {/* Mobile Bottom Navigation Fade Gradient */}
+      <div className="relative z-10 max-w-[1800px] mx-auto px-4 md:px-10 lg:px-12 pt-10 md:pt-14 lg:pt-20 pb-8 landscape:pt-6 landscape:py-2 landscape:px-4">
+        <div className="space-y-6 md:mt-2 lg:mt-6">
           {/* MAIN CONTENT */}
           <div className="flex-1 min-w-0 space-y-6">
             {activeTab === 'subscription' && (
-              <div className="space-y-12 animate-in fade-in duration-500">
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-                  {/* Left Column: Plans and Features */}
-                  <div className="lg:col-span-8 flex flex-col gap-6">
-                    {/* Plans Section */}
+              <div className="space-y-12 landscape:space-y-4 animate-in fade-in duration-500">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 landscape:gap-3 items-stretch">
+                  {/* Plans Section */}
+                  <div className="order-1 md:col-span-12 lg:col-span-8 flex flex-col gap-6">
                     <div className="grid grid-cols-3 gap-2 sm:gap-4 xl:gap-8">
                       {/* 1 Month */}
-                      <div 
-                        onClick={() => setSelectedPlan('1month')}
-                        className={`group relative flex flex-col p-3 sm:p-8 xl:p-10 rounded-2xl sm:rounded-[2.5rem] xl:rounded-[3rem] transition-all duration-500 cursor-pointer border backdrop-blur-3xl overflow-hidden h-full min-h-[160px] landscape:min-h-[110px] sm:min-h-[260px] sm:landscape:min-h-[180px] xl:min-h-[320px] hover:scale-[1.03] active:scale-[0.97] shadow-[0_0_0_1px_rgba(255,255,255,0.03)] ${
+                        <div 
+                        onClick={() => handlePlanSelect('1month')}
+                        className={`group relative flex flex-col p-3 sm:p-8 xl:p-10 rounded-2xl sm:rounded-[2.5rem] xl:rounded-[3rem] transition-all duration-500 cursor-pointer border backdrop-blur-3xl overflow-hidden h-full min-h-[160px] landscape:min-h-[140px] sm:min-h-[260px] sm:landscape:min-h-[180px] xl:min-h-[320px] hover:scale-[1.03] active:scale-[0.97] shadow-[0_0_0_1px_rgba(255,255,255,0.03)] ${
                           selectedPlan === '1month' 
                           ? 'bg-[#121215]/95 border-purple-500/30 shadow-[0_0_60px_rgba(168,85,247,0.12),0_0_0_1px_rgba(168,85,247,0.2)]' 
                           : 'bg-[#0c0c0e]/90 border-white/10 hover:border-white/20 hover:bg-[#121215]/95'
@@ -517,11 +737,11 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                         </div>
                       </div>
 
-                      {/* 3 Months */}
+                      {/* 6 Months */}
                       <div 
-                        onClick={() => setSelectedPlan('3months')}
+                        onClick={() => handlePlanSelect('6months')}
                         className={`group relative flex flex-col p-3 sm:p-8 xl:p-10 rounded-2xl sm:rounded-[2.5rem] xl:rounded-[3rem] transition-all duration-500 cursor-pointer border backdrop-blur-3xl overflow-hidden h-full min-h-[160px] landscape:min-h-[110px] sm:min-h-[260px] sm:landscape:min-h-[180px] xl:min-h-[320px] hover:scale-[1.03] active:scale-[0.97] shadow-[0_0_0_1px_rgba(255,255,255,0.03)] ${
-                          selectedPlan === '3months' 
+                          selectedPlan === '6months' 
                           ? 'bg-[#121215]/95 border-purple-500/30 shadow-[0_0_60px_rgba(168,85,247,0.12),0_0_0_1px_rgba(168,85,247,0.2)]' 
                           : 'bg-[#0c0c0e]/90 border-white/10 hover:border-white/20 hover:bg-[#121215]/95'
                         }`}
@@ -529,29 +749,29 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                         <div className="absolute -top-20 -right-20 w-64 h-64 bg-purple-600/10 blur-[100px] group-hover:bg-purple-600/20 transition-all duration-700" />
                         <div className="absolute top-0 right-0 bg-[#ff4d4d] px-2 py-1 sm:px-4 sm:py-2 xl:px-6 xl:py-3 rounded-tr-2xl sm:rounded-tr-[2.5rem] xl:rounded-tr-[3rem] rounded-bl-lg sm:rounded-bl-[1.5rem] xl:rounded-bl-[2rem] shadow-xl z-20">
                           <div className="text-white text-[7px] sm:text-[9px] xl:text-[11px] font-black uppercase tracking-wider">
-                            {t.discount} -35%
+                            {t.discount} -41%
                           </div>
                         </div>
                         <div className="relative z-10 mb-4 landscape:mb-2 sm:mb-8 pt-6 landscape:pt-4 sm:pt-10">
                           <div className="flex items-start gap-1 sm:gap-1.5 xl:gap-2">
-                            <span className="text-xl sm:text-4xl xl:text-5xl 2xl:text-6xl font-black text-white tracking-tighter">$49</span>
+                            <span className="text-xl sm:text-4xl xl:text-5xl 2xl:text-6xl font-black text-white tracking-tighter">$89</span>
                             <div className="relative -mt-0.5 sm:-mt-1 xl:-mt-2 shrink-0">
-                              <span className="text-[10px] sm:text-[18px] xl:text-[20px] text-gray-400/80 font-black leading-none tracking-tighter">$75</span>
+                              <span className="text-[10px] sm:text-[18px] xl:text-[20px] text-gray-400/80 font-black leading-none tracking-tighter">$150</span>
                               <div className="absolute top-1/2 left-[-10%] w-[120%] h-[1px] sm:h-[2px] bg-red-500/70 -rotate-12 origin-center" />
                             </div>
                           </div>
                         </div>
                         <div className="relative z-10 flex-1">
-                          <div className="text-xs sm:text-2xl font-black text-white mb-0.5 sm:mb-2 tracking-tight">{t.months_3}</div>
-                          <div className="text-[8px] sm:text-sm text-gray-400 font-bold">$16 <span className="text-gray-500">{t.per_month}</span></div>
+                          <div className="text-xs sm:text-2xl font-black text-white mb-0.5 sm:mb-2 tracking-tight">{t.months_6}</div>
+                          <div className="text-[8px] sm:text-sm text-gray-400 font-bold">$14 <span className="text-gray-500">{t.per_month}</span></div>
                         </div>
                         <div className="relative z-10 mt-4 landscape:mt-2 sm:mt-8">
                           <button className={`w-full py-2 sm:py-3.5 rounded-xl sm:rounded-2xl text-[8px] sm:text-[11px] font-black uppercase tracking-[0.25em] transition-all duration-500 ${
-                            selectedPlan === '3months' 
+                            selectedPlan === '6months' 
                             ? 'bg-white text-black shadow-[0_15px_35px_rgba(255,255,255,0.25)]' 
                             : 'bg-white/5 text-gray-400 group-hover:bg-white/10'
                           }`}>
-                            {selectedPlan === '3months' ? (
+                            {selectedPlan === '6months' ? (
                               <>
                                 <span className="hidden sm:inline">{t.selected}</span>
                                 <span className="sm:hidden">✓</span>
@@ -568,7 +788,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
 
                       {/* 1 Year */}
                       <div 
-                        onClick={() => setSelectedPlan('1year')}
+                        onClick={() => handlePlanSelect('1year')}
                         className={`group relative flex flex-col p-3 sm:p-8 xl:p-10 rounded-2xl sm:rounded-[2.5rem] xl:rounded-[3rem] transition-all duration-500 cursor-pointer border backdrop-blur-3xl overflow-hidden h-full min-h-[160px] landscape:min-h-[110px] sm:min-h-[260px] sm:landscape:min-h-[180px] xl:min-h-[320px] hover:scale-[1.03] active:scale-[0.97] shadow-[0_0_0_1px_rgba(255,255,255,0.03)] ${
                           selectedPlan === '1year' 
                           ? 'bg-[#121215]/95 border-purple-500/30 shadow-[0_0_60px_rgba(168,85,247,0.12),0_0_0_1px_rgba(168,85,247,0.2)]' 
@@ -614,9 +834,10 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                         </div>
                       </div>
                     </div>
+                  </div>
 
-                    {/* Features Section */}
-                    <div className="bg-[#0c0c0e]/95 border border-white/10 rounded-[2.5rem] p-6 sm:p-8 relative overflow-hidden group backdrop-blur-2xl hover:border-white/20 transition-all shadow-[0_0_0_1px_rgba(255,255,255,0.03)] flex-1">
+                  {/* Features Section */}
+                  <div className="order-3 md:order-2 md:col-span-12 lg:col-span-8 bg-[#0c0c0e]/95 border border-white/10 rounded-[2.5rem] p-6 sm:p-8 relative overflow-hidden group backdrop-blur-2xl hover:border-white/20 transition-all shadow-[0_0_0_1px_rgba(255,255,255,0.03)] selection:bg-purple-500/30">
                       <div className="absolute top-0 right-0 w-48 h-48 bg-purple-600/5 blur-[80px] -mr-24 -mt-24 group-hover:bg-purple-600/10 transition-all duration-1000" />
                       <h3 className="text-2xl font-black text-white mb-6 tracking-tight">
                         {language === 'ru' ? (
@@ -629,7 +850,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                           </>
                         )}
                       </h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                         {[
                           { title: t.feature_density, desc: t.feature_density_desc },
                           { title: t.feature_ai, desc: t.feature_ai_desc },
@@ -654,320 +875,379 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                         ))}
                       </div>
                     </div>
-                  </div>
 
                 {/* Right Column: Checkout Section */}
-                <div className="lg:col-span-4 w-full h-full max-w-md mx-auto lg:max-w-none lg:mx-0 bg-[#0c0c0e]/95 border border-white/10 rounded-[2.5rem] p-6 space-y-6 flex flex-col relative overflow-hidden group backdrop-blur-2xl hover:border-white/20 transition-all shadow-[0_0_0_1px_rgba(255,255,255,0.03)]">
+                <div ref={checkoutRef} className="order-2 md:order-3 md:col-span-12 lg:col-start-9 lg:col-span-4 lg:row-start-1 lg:row-span-2 w-full h-full bg-[#0c0c0e]/95 border border-white/10 rounded-[2.5rem] p-6 space-y-6 flex flex-col relative overflow-hidden group backdrop-blur-2xl hover:border-white/20 transition-all shadow-[0_0_0_1px_rgba(255,255,255,0.03)] scroll-mt-24">
                   <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-600/5 blur-[100px] -ml-32 -mb-32 group-hover:bg-purple-600/10 transition-all duration-1000" />
                   <h3 className="text-xl font-black text-white tracking-tight">{t.payment}</h3>
                   
-                  <div className="space-y-3 relative z-10">
-                    <div className="flex justify-between items-center p-3 rounded-xl bg-[#0c0c0e]/60 border border-white/5 backdrop-blur-md transition-all">
-                      <span className="text-[9px] font-black text-gray-500 uppercase tracking-[0.2em]">{t.period_label}</span>
-                      <span className="text-xs font-black text-white uppercase tracking-wider">{plans[selectedPlan].period}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 rounded-xl bg-[#0c0c0e]/60 border border-white/5 backdrop-blur-md transition-all">
-                      <span className="text-[9px] font-black text-gray-500 uppercase tracking-[0.2em]">{t.ending_label}</span>
-                      <span className="text-xs font-black text-white tracking-tight">{plans[selectedPlan].endDate}</span>
-                    </div>
-                  </div>
-
-                  <div className="relative z-10 space-y-6">
-                    <div className="space-y-3">
-                      <div className="text-[9px] font-black text-white uppercase tracking-[0.2em] mb-1 px-1 opacity-60">{t.payment_method_label}</div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button 
-                          onClick={() => {
-                            setSelectedMethod('card');
-                            setPaymentError(false);
-                          }}
-                          className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all duration-300 ${
-                            selectedMethod === 'card' 
-                            ? 'bg-white border-white shadow-[0_10px_30px_rgba(255,255,255,0.2)] scale-[1.01]' 
-                            : 'border-white/10 hover:border-white/30'
-                          } backdrop-blur-md`}
-                          style={selectedMethod !== 'card' ? {
-                            background: 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)'
-                          } : {}}
-                        >
-                          <CreditCard size={20} className={`flex-shrink-0 transition-colors ${selectedMethod === 'card' ? 'text-black' : 'text-white'}`} />
-                          <div className="text-left overflow-hidden">
-                            <div className={`text-[10px] font-black tracking-widest truncate ${selectedMethod === 'card' ? 'text-black' : 'text-gray-300'}`}>
-                              {t.card}
-                            </div>
-                            <div className={`text-[8px] font-bold truncate ${selectedMethod === 'card' ? 'text-gray-500' : 'text-gray-500'}`}>Visa, MC, MIR</div>
-                          </div>
-                        </button>
-
-                        <button 
-                          onClick={() => {
-                            setSelectedMethod('crypto');
-                            setPaymentError(false);
-                          }}
-                          className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all duration-300 ${
-                            selectedMethod === 'crypto' 
-                            ? 'bg-white border-white shadow-[0_10px_30px_rgba(255,255,255,0.2)] scale-[1.01]' 
-                            : 'border-white/10 hover:border-white/30'
-                          } backdrop-blur-md`}
-                          style={selectedMethod !== 'crypto' ? {
-                            background: 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)'
-                          } : {}}
-                        >
-                          <Bitcoin size={20} className={`flex-shrink-0 transition-colors ${selectedMethod === 'crypto' ? 'text-black' : 'text-[#F7931A]'}`} />
-                          <div className="text-left overflow-hidden">
-                            <div className={`text-[10px] font-black tracking-widest truncate ${selectedMethod === 'crypto' ? 'text-black' : 'text-gray-300'}`}>
-                              {t.crypto}
-                            </div>
-                            <div className={`text-[8px] font-bold truncate ${selectedMethod === 'crypto' ? 'text-gray-500' : 'text-gray-500'}`}>USDT, BTC, TON</div>
-                          </div>
-                        </button>
-
-                        <button 
-                          onClick={() => {
-                            setSelectedMethod('telegram_stars');
-                            setPaymentError(false);
-                          }}
-                          className={`flex items-center justify-center gap-3 p-4 rounded-2xl border-2 transition-all duration-500 col-span-2 relative overflow-hidden group/tg ${
-                            selectedMethod === 'telegram_stars' 
-                            ? 'border-white/60 shadow-[0_10px_40px_rgba(255,255,255,0.15)] scale-[1.02]' 
-                            : 'border-white/10 hover:border-white/30'
-                          }`}
-                          style={{
-                            background: selectedMethod === 'telegram_stars' 
-                              ? 'linear-gradient(135deg, #60a5fa 0%, #a855f7 50%, #f43f5e 100%)'
-                              : 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)',
-                            backgroundSize: '200% 200%',
-                            animation: 'gradient-x 5s ease infinite'
-                          }}
-                        >
-                          <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.5),transparent)]" />
-                          {selectedMethod === 'telegram_stars' && (
-                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent -translate-x-full animate-shimmer" />
-                          )}
-                          <img 
-                            src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
-                            alt="Stars" 
-                            className={`w-7 h-7 flex-shrink-0 transition-all duration-500 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${selectedMethod === 'telegram_stars' ? 'scale-125' : 'scale-100 group-hover/tg:scale-110'}`}
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="text-center relative z-10">
-                            <div className={`text-[13px] font-black tracking-[0.15em] transition-colors drop-shadow-lg ${selectedMethod === 'telegram_stars' ? 'text-white' : 'text-gray-200 group-hover/tg:text-white'}`}>
-                              {t.telegram_stars}
-                            </div>
-                          </div>
-                        </button>
+                  {selectedPlan ? (
+                    <>
+                      <div className="space-y-3 relative z-10">
+                        <div className="flex justify-between items-center p-3 rounded-xl bg-[#0c0c0e]/60 border border-white/5 backdrop-blur-md transition-all">
+                          <span className="text-[9px] font-black text-gray-500 uppercase tracking-[0.2em]">{t.period_label}</span>
+                          <span className="text-xs font-black text-white uppercase tracking-wider">{plans[selectedPlan].period}</span>
+                        </div>
+                        <div className="flex justify-between items-center p-3 rounded-xl bg-[#0c0c0e]/60 border border-white/5 backdrop-blur-md transition-all">
+                          <span className="text-[9px] font-black text-gray-500 uppercase tracking-[0.2em]">{t.ending_label}</span>
+                          <span className="text-xs font-black text-white tracking-tight">{plans[selectedPlan].endDate}</span>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="relative group/input">
-                        <input 
-                          type="text" 
-                          placeholder={t.promocode} 
-                          className="w-full bg-[#0c0c0e]/80 border border-purple-500/30 rounded-xl px-4 py-4 text-xs text-white focus:outline-none focus:border-purple-500/60 transition-colors pr-24 font-bold placeholder:text-gray-600 backdrop-blur-md"
-                          style={{ WebkitTapHighlightColor: 'transparent' }}
-                          value={promoCode}
-                          onChange={(e) => setPromoCode(e.target.value)}
-                        />
-                      <button className={`absolute right-1.5 top-1.5 bottom-1.5 px-4 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all backdrop-blur-md active:scale-95 border ${promoCode ? 'bg-white text-black border-white shadow-[0_0_20px_rgba(255,255,255,0.2)]' : 'bg-white/10 text-gray-500 border-white/10 group-focus-within/input:bg-white group-focus-within/input:text-black group-focus-within/input:border-white hover:bg-white/20'}`}>
-                        {t.apply}
-                      </button>
-                    </div>
-
-                    <div className="flex items-end justify-between gap-4 flex-wrap">
-                      <div className="flex-shrink-0">
-                        <div className="text-[9px] font-black text-gray-500 uppercase tracking-[0.2em] mb-1">{t.to_pay}</div>
-                        <div className="text-4xl font-black text-white tracking-tighter leading-none whitespace-nowrap flex items-center gap-2">
-                          {selectedMethod === 'telegram_stars' ? (
-                            <>
-                              {plans[selectedPlan].starsPrice}
+                      <div className="relative z-10 space-y-6">
+                        <div className="space-y-3">
+                          <div className="text-[9px] font-black text-white uppercase tracking-[0.2em] mb-1 px-1 opacity-60">{t.payment_method_label}</div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button 
+                              onClick={() => {
+                                setSelectedMethod('telegram_stars');
+                                setPaymentError(false);
+                              }}
+                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 relative overflow-hidden group/tg ${
+                                selectedMethod === 'telegram_stars' 
+                                ? 'border-white/60 shadow-[0_10px_30px_rgba(255,255,255,0.15)] scale-[1.01]' 
+                                : 'border-white/10 hover:border-white/30'
+                              } backdrop-blur-md`}
+                              style={{
+                                background: selectedMethod === 'telegram_stars' 
+                                  ? 'linear-gradient(135deg, #60a5fa 0%, #a855f7 50%, #f43f5e 100%)'
+                                  : 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)',
+                              }}
+                            >
+                              <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.5),transparent)]" />
+                              {selectedMethod === 'telegram_stars' && (
+                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent -translate-x-full animate-shimmer" />
+                              )}
                               <img 
                                 src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
                                 alt="Stars" 
-                                className="w-8 h-8 flex-shrink-0"
+                                className={`w-7 h-7 flex-shrink-0 transition-all duration-500 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${selectedMethod === 'telegram_stars' ? 'scale-110' : 'scale-100 group-hover/tg:scale-105'}`}
                                 referrerPolicy="no-referrer"
                               />
-                            </>
-                          ) : (
-                            plans[selectedPlan].displayPrice
-                          )}
+                              <div className="text-left overflow-hidden relative z-10">
+                                <div className={`text-[10px] font-black tracking-widest truncate ${selectedMethod === 'telegram_stars' ? 'text-white' : 'text-gray-300'}`}>
+                                  {t.telegram_stars}
+                                </div>
+                                <div className={`text-[8px] font-bold truncate ${selectedMethod === 'telegram_stars' ? 'text-white/80' : 'text-gray-500'}`}>
+                                  Fast & Secure
+                                </div>
+                              </div>
+                            </button>
+
+                            <button 
+                              onClick={() => {
+                                setSelectedMethod('crypto');
+                                setPaymentError(false);
+                              }}
+                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 ${
+                                selectedMethod === 'crypto' 
+                                ? 'bg-white border-white shadow-[0_10px_30px_rgba(255,255,255,0.2)] scale-[1.01]' 
+                                : 'border-white/10 hover:border-white/30'
+                              } backdrop-blur-md`}
+                              style={selectedMethod !== 'crypto' ? {
+                                background: 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)'
+                              } : {}}
+                            >
+                              <Bitcoin size={20} className={`flex-shrink-0 transition-colors ${selectedMethod === 'crypto' ? 'text-black' : 'text-[#F7931A]'}`} />
+                              <div className="text-left overflow-hidden">
+                                <div className={`text-[10px] font-black tracking-widest truncate ${selectedMethod === 'crypto' ? 'text-black' : 'text-gray-300'}`}>
+                                  {t.crypto}
+                                </div>
+                                <div className={`text-[8px] font-bold truncate ${selectedMethod === 'crypto' ? 'text-gray-500' : 'text-gray-500'}`}>Heleket (USDT, BTC, TON)</div>
+                              </div>
+                            </button>
+
+                            <button 
+                              onClick={() => {
+                                setSelectedMethod('card');
+                                setPaymentError(false);
+                              }}
+                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 col-span-2 ${
+                                selectedMethod === 'card' 
+                                ? 'bg-white border-white shadow-[0_10px_30px_rgba(255,255,255,0.2)] scale-[1.01]' 
+                                : 'border-white/10 hover:border-white/30'
+                              } backdrop-blur-md`}
+                              style={selectedMethod !== 'card' ? {
+                                background: 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)'
+                              } : {}}
+                            >
+                              <div className="flex items-center -space-x-2.5 shrink-0">
+                                {/* SberPay Image Logo (First, in front, z-20) */}
+                                <img 
+                                  src="https://esa-res.online.sberbank.ru/ESA/sbol/r-94.0.0/images/hNnvG9ma72GAw3xUBlI9bA==.png" 
+                                  alt="Sber" 
+                                  referrerPolicy="no-referrer"
+                                  className="w-7 h-7 rounded-full object-cover border border-black/15 shadow-md relative z-20 scale-100 hover:scale-110 transition-transform duration-200 bg-white"
+                                />
+                                {/* T-Pay Image Logo (Second, behind Sber, z-10) */}
+                                <img 
+                                  src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTEYj4u6APZ85kDc1P-DeepzkoKTHKjhU_lLQ&s" 
+                                  alt="T-Pay" 
+                                  referrerPolicy="no-referrer"
+                                  className="w-7 h-7 rounded-full object-cover border border-black/15 shadow-md relative z-10 scale-100 hover:scale-110 transition-transform duration-200 bg-white"
+                                />
+                                {/* Plus Sign on the right of T-bank */}
+                                <span className={`text-[18px] font-black leading-none ml-3 z-30 transition-colors ${selectedMethod === 'card' ? 'text-black/60' : 'text-white/60'}`}>+</span>
+                              </div>
+                              <div className="text-left overflow-hidden ml-3">
+                                <div className={`text-[11px] font-black tracking-wider truncate ${selectedMethod === 'card' ? 'text-black' : 'text-gray-300'}`}>
+                                  {t.card}
+                                </div>
+                                <div className={`text-[9.5px] font-bold truncate ${selectedMethod === 'card' ? 'text-gray-500' : 'text-gray-400/80'}`}>
+                                  Сбербанк, Карта, T-Pay..., ЮMoney
+                                </div>
+                              </div>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="relative group/input">
+                            <input 
+                              type="text" 
+                              placeholder={t.promocode} 
+                              className="w-full bg-[#0c0c0e]/80 border border-purple-500/30 rounded-xl px-4 py-4 text-xs text-white focus:outline-none focus:border-purple-500/60 transition-colors pr-24 font-bold placeholder:text-gray-600 backdrop-blur-md"
+                              style={{ WebkitTapHighlightColor: 'transparent' }}
+                              value={promoCode}
+                              onChange={(e) => setPromoCode(e.target.value)}
+                            />
+                          <button className={`absolute right-1.5 top-1.5 bottom-1.5 px-4 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all backdrop-blur-md active:scale-95 border ${promoCode ? 'bg-white text-black border-white shadow-[0_0_20px_rgba(255,255,255,0.2)]' : 'bg-white/10 text-gray-500 border-white/10 group-focus-within/input:bg-white group-focus-within/input:text-black group-focus-within/input:border-white hover:bg-white/20'}`}>
+                            {t.apply}
+                          </button>
+                        </div>
+
+                        <div className="flex items-end justify-between gap-4 flex-wrap">
+                          <div className="flex-shrink-0">
+                            <div className="text-[9px] font-black text-gray-500 uppercase tracking-[0.2em] mb-1">{t.to_pay}</div>
+                            <div className="text-4xl font-black text-white tracking-tighter leading-none whitespace-nowrap flex items-center gap-2">
+                              {selectedMethod === 'telegram_stars' ? (
+                                <>
+                                  {plans[selectedPlan].starsPrice}
+                                  <img 
+                                    src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
+                                    alt="Stars" 
+                                    className="w-8 h-8 flex-shrink-0"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                </>
+                              ) : (
+                                plans[selectedPlan].displayPrice
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 flex-shrink-0">
+                            {plans[selectedPlan].originalPrice && (
+                              <div className="relative">
+                                <span className="text-sm text-gray-400 font-bold leading-none">{plans[selectedPlan].originalPrice}</span>
+                                <div className="absolute top-1/2 left-[-10%] w-[120%] h-[1.5px] bg-red-500/60 -rotate-12 origin-center" />
+                              </div>
+                            )}
+                            <div className={`px-3 py-1.5 rounded-tr-2xl rounded-bl-xl shadow-lg flex-shrink-0 ${
+                              selectedPlan === '1year' 
+                              ? 'bg-gradient-to-r from-blue-400 via-purple-500 to-rose-500' 
+                              : 'bg-[#ff4d4d]'
+                            }`}>
+                              <div className="text-white text-[9px] font-black uppercase tracking-wider">
+                                {t.discount} -{plans[selectedPlan].discount || '0%'}
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 flex-shrink-0">
-                        {plans[selectedPlan].originalPrice && (
-                          <div className="relative">
-                            <span className="text-sm text-gray-400 font-bold leading-none">{plans[selectedPlan].originalPrice}</span>
-                            <div className="absolute top-1/2 left-[-10%] w-[120%] h-[1.5px] bg-red-500/60 -rotate-12 origin-center" />
-                          </div>
+
+                      <div className="pt-6 relative z-10 border-t border-white/5 mt-auto space-y-4">
+                        <button 
+                          onClick={handlePayment}
+                          className="w-full py-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all duration-500 bg-white text-black shadow-[0_15px_40px_rgba(255,255,255,0.15)] hover:bg-gray-100 hover:scale-[1.02] active:scale-[0.98]"
+                        >
+                          {t.pay_now}
+                        </button>
+                        {paymentError && !selectedMethod && (
+                          <motion.div 
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="text-center"
+                          >
+                            <span className="text-[10px] text-red-500 font-black uppercase tracking-widest bg-red-500/10 px-4 py-2 rounded-full border border-red-500/20">
+                              {t.select_payment_method}
+                            </span>
+                          </motion.div>
                         )}
-                        <div className={`px-3 py-1.5 rounded-tr-2xl rounded-bl-xl shadow-lg flex-shrink-0 ${
-                          selectedPlan === '1year' 
-                          ? 'bg-gradient-to-r from-blue-400 via-purple-500 to-rose-500' 
-                          : 'bg-[#ff4d4d]'
-                        }`}>
-                          <div className="text-white text-[9px] font-black uppercase tracking-wider">
-                            {t.discount} -{plans[selectedPlan].discount || '0%'}
-                          </div>
-                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center p-8 relative z-10">
+                      <div className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-6 animate-pulse">
+                        <Star className="w-10 h-10 text-gray-500" />
+                      </div>
+                      <div className="text-sm font-black text-gray-500 uppercase tracking-[0.2em] leading-relaxed whitespace-pre-line">
+                        {language === 'ru' ? 'Выберите тарифный план\nдля продолжения' : 'Select a subscription plan\nto continue'}
+                      </div>
+                      <div className="mt-8 space-y-3 w-full">
+                        <div className="h-12 w-full bg-white/[0.02] border border-white/5 rounded-xl animate-pulse" />
+                        <div className="h-24 w-full bg-white/[0.02] border border-white/5 rounded-xl animate-pulse" />
                       </div>
                     </div>
-                  </div>
-
-                  <div className="pt-6 relative z-10 border-t border-white/5 mt-auto space-y-4">
-                    <button 
-                      onClick={handlePayment}
-                      className="w-full py-4 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] transition-all duration-500 bg-white text-black shadow-[0_15px_40px_rgba(255,255,255,0.15)] hover:bg-gray-100 hover:scale-[1.02] active:scale-[0.98]"
-                    >
-                      {t.pay_now}
-                    </button>
-                    {paymentError && !selectedMethod && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="text-center"
-                      >
-                        <span className="text-[10px] text-red-500 font-black uppercase tracking-widest bg-red-500/10 px-4 py-2 rounded-full border border-red-500/20">
-                          {t.select_payment_method}
-                        </span>
-                      </motion.div>
-                    )}
-                  </div>
+                  )}
                 </div>
               </div>
             </div>
           )}
 
           {activeTab === 'profile' && (
-            <div className="space-y-6 animate-in fade-in duration-500">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
-                <div className="lg:col-span-1 space-y-6">
-                  {/* Avatar & Basic Info */}
-                  <div className="bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-6 sm:p-8 flex flex-col items-center text-center backdrop-blur-2xl transition-all group relative overflow-hidden shadow-[0_0_40px_rgba(255,255,255,0.03)] focus-within:ring-2 focus-within:ring-white/20 h-full">
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-purple-500 to-rose-500 opacity-50" />
-                    
-                    <div className="relative mb-6">
-                      <div className="w-40 h-40 sm:w-52 sm:h-52 rounded-full flex items-center justify-center relative overflow-hidden transition-all duration-500 bg-white/5 border-2 border-white/10">
-                        <SubscriptionAvatar tier={avatarTier} size={150} padding="p-3 sm:p-4" />
-                      </div>
-                      <div className="absolute -bottom-1 -right-1 w-5 h-5 sm:w-6 sm:h-6 bg-green-500 border-4 border-[#0a0a0a] rounded-full shadow-lg z-10" title="Online"></div>
-                    </div>
+            <div className="space-y-6 landscape:space-y-3 animate-in fade-in duration-500">
+              <div className="grid grid-cols-1 sm:grid-cols-2 landscape:grid-cols-2 lg:grid-cols-3 gap-6 landscape:gap-3 items-stretch">
+              {/* Avatar & Basic Info */}
+              <div className="lg:col-span-1 landscape:col-span-1 bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-6 sm:p-8 lg:p-16 landscape:p-2 flex flex-col items-center text-center backdrop-blur-2xl transition-all group relative overflow-hidden shadow-[0_0_40px_rgba(255,255,255,0.03)] focus-within:ring-2 focus-within:ring-white/20">
+                <div className="relative mb-4 sm:mb-8 lg:mb-12 landscape:mb-1">
+                  <div className="w-[134px] h-[134px] sm:w-[140px] sm:h-[140px] lg:w-[196px] lg:h-[196px] xl:w-[266px] xl:h-[266px] landscape:w-28 landscape:h-28 rounded-full flex items-center justify-center relative overflow-hidden transition-all duration-500">
+                    <SubscriptionAvatar tier={avatarTier} size={isLandscape ? (windowWidth < 1024 ? 120 : 175) : (windowWidth < 640 ? 134 : (windowWidth < 1024 ? 140 : 245))} />
+                  </div>
 
-                    <div className="w-full space-y-6 mb-8 py-2">
-                      <div className="flex flex-col items-center">
-                        <div className="text-[10px] text-gray-500 uppercase font-black tracking-[0.2em] mb-1">ID</div>
-                        <div className="text-sm text-white font-mono bg-white/5 px-3 py-1 rounded-lg border border-white/5">{userId}</div>
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <div className="text-[10px] text-gray-500 uppercase font-black tracking-[0.2em] mb-1">{language === 'ru' ? 'Почта' : 'Email'}</div>
-                        <div className="text-sm text-gray-300 font-medium">{userEmail}</div>
-                      </div>
-                      <div className="flex flex-col items-center">
-                        <div className="text-[10px] text-gray-500 uppercase font-black tracking-[0.2em] mb-1">{language === 'ru' ? 'Имя пользователя' : 'Username'}</div>
-                        <div className="text-sm text-white font-bold">{dbUser?.username || 'User'}</div>
-                      </div>
-                    </div>
+                </div>
 
-                    <div className="mt-8 w-full">
-                      <button 
-                        onClick={onLogout}
-                        className="w-full py-4 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] text-red-500 transition-all flex items-center justify-center gap-3 group/logout shadow-lg shadow-red-500/5 hover:shadow-red-500/10"
-                      >
-                        <LogOut size={16} className="group-hover/logout:-translate-x-1 transition-transform" />
-                        {t.exit_btn}
-                      </button>
-                    </div>
+                <div className="w-full space-y-3 sm:space-y-4 lg:space-y-6 landscape:space-y-1 mb-4 sm:mb-6 lg:mb-8 landscape:mb-1 py-1 sm:py-2">
+                   <div className="flex flex-col items-center">
+                    <div className="text-[8px] sm:text-[10px] landscape:text-[7px] text-gray-500 uppercase font-black tracking-[0.2em] mb-1">ID</div>
+                    <div className="text-xs sm:text-sm landscape:text-[10px] text-white font-mono bg-white/5 px-3 py-1 rounded-lg border border-white/5">{userId}</div>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <div className="text-[8px] sm:text-[10px] landscape:text-[7px] text-gray-500 uppercase font-black tracking-[0.2em] mb-1">{language === 'ru' ? 'Почта' : 'Email'}</div>
+                    <div className="text-xs sm:text-sm landscape:text-[10px] text-gray-300 font-medium">{userEmail}</div>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <div className="text-[8px] sm:text-[10px] landscape:text-[7px] text-gray-500 uppercase font-black tracking-[0.2em] mb-1">{language === 'ru' ? 'Имя пользователя' : 'Username'}</div>
+                    <div className="text-xs sm:text-sm landscape:text-[10px] text-white font-bold">{dbUser?.username || 'User'}</div>
                   </div>
                 </div>
 
-              {/* Account Details & Subscription */}
-                <div className="lg:col-span-2 space-y-6 flex flex-col h-full">
-                  {/* Registration Date & Email Status Block - SWAPPED Up */}
-                  <div className="bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-6 sm:p-8 backdrop-blur-2xl transition-all shadow-[0_0_40px_rgba(255,255,255,0.03)] flex-1 flex flex-col justify-center">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {/* Registration Date Item */}
-                      <div className="flex items-center gap-5 p-5 rounded-[1.5rem] bg-white/[0.02] border border-white/5 shadow-inner transition-colors hover:border-white/10">
-                        <div className="w-14 h-14 rounded-2xl bg-black/40 border border-white/5 flex items-center justify-center text-gray-400">
-                          <Calendar size={24} strokeWidth={1.5} />
-                        </div>
-                        <div className="flex flex-col">
-                          <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">
-                            {language === 'ru' ? 'ДАТА РЕГИСТРАЦИИ' : 'REGISTRATION DATE'}
-                          </div>
-                          <div className="text-lg font-black text-white tracking-tight leading-none">
-                            24 сентября 2025
-                          </div>
-                        </div>
-                      </div>
+                <div className="mt-2 sm:mt-8 landscape:mt-2 w-full">
+                  <button 
+                    onClick={onLogout}
+                    className="w-full py-2.5 sm:py-4 landscape:py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-[1.25rem] sm:rounded-2xl text-[9px] sm:text-[11px] landscape:text-[8px] font-black uppercase tracking-[0.2em] text-red-500 transition-all flex items-center justify-center gap-3 group/logout shadow-lg shadow-red-500/5 hover:shadow-red-500/10"
+                  >
+                    <LogOut size={isLandscape ? 12 : 16} className="group-hover/logout:-translate-x-1 transition-transform" />
+                    {t.exit_btn}
+                  </button>
+                </div>
+              </div>
 
-                      {/* Email Status Item */}
-                      <div className="flex items-center gap-5 p-5 rounded-[1.5rem] bg-white/[0.02] border border-white/5 shadow-inner transition-colors hover:border-white/10">
-                        <div className="w-14 h-14 rounded-2xl bg-black/40 border border-white/5 flex items-center justify-center text-gray-400">
-                          <CheckCircle size={24} strokeWidth={1.5} />
+              {/* Account Details & Subscription */}
+              <div className="sm:col-span-1 lg:col-span-2 landscape:col-span-1 space-y-6 flex flex-col h-full">
+                {/* Registration Date & Email Status Block - SWAPPED Up */}
+                <div className="bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-4 sm:p-10 landscape:p-2 backdrop-blur-2xl transition-all shadow-[0_0_40px_rgba(255,255,255,0.03)] flex-1 flex flex-col justify-between">
+                  <div className="flex flex-col h-full justify-between gap-4 sm:gap-6 landscape:gap-1">
+                    {/* Registration Date Item */}
+                    <div className="flex-1 flex items-center gap-4 sm:gap-5 landscape:gap-3 p-4 sm:p-5 landscape:p-2 rounded-[1.25rem] sm:rounded-[1.5rem] bg-white/[0.02] border border-white/5 shadow-inner transition-colors hover:border-white/10">
+                      <div className="w-10 h-10 sm:w-14 sm:h-14 landscape:w-9 landscape:h-9 rounded-xl sm:rounded-2xl bg-black/40 border border-white/5 flex items-center justify-center text-gray-400">
+                        <Calendar size={isLandscape ? 18 : (window.innerWidth < 640 ? 18 : 24)} strokeWidth={1.5} />
+                      </div>
+                      <div className="flex flex-col">
+                        <div className="text-[8px] sm:text-[10px] landscape:text-[8px] font-black text-gray-500 uppercase tracking-widest mb-1 sm:mb-1.5 landscape:mb-0.5">
+                          {language === 'ru' ? 'ДАТА РЕГИСТРАЦИИ' : 'REGISTRATION DATE'}
                         </div>
-                        <div className="flex flex-col">
-                          <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">
-                            {language === 'ru' ? 'СТАТУС ПОЧТЫ' : 'EMAIL STATUS'}
-                          </div>
-                          <div className="text-lg font-black text-white tracking-tight leading-none flex items-center gap-2">
-                            {language === 'ru' ? 'Подтверждена' : 'Confirmed'}
-                            <Check size={16} className="text-white" strokeWidth={3} />
-                          </div>
+                        <div className="text-sm sm:text-lg landscape:text-xs font-black text-white tracking-tight leading-none">
+                          {joinDate}
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Useful Links - SWAPPED Down */}
-                  <div className="bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-6 sm:p-8 backdrop-blur-2xl transition-all shadow-[0_0_40px_rgba(255,255,255,0.03)] flex-1 flex flex-col">
-                    <h3 className="text-[12px] sm:text-sm font-black text-gray-500 uppercase tracking-[0.25em] mb-4 sm:mb-6 flex items-center gap-3">
-                      <LinkIcon size={16} className="text-gray-600" /> {t.useful_links}
-                    </h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-                      {[
-                        { title: 'Telegram', subtitle: language === 'ru' ? 'Наше сообщество' : 'Our Community', icon: <MessageCircle className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />, link: 'https://t.me/+Hm-fim1iQl4yZTEy' },
-                        { title: t.read_terms, subtitle: '', icon: <Shield className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />, onClick: () => { setLegalModalType('privacy'); setIsLegalModalOpen(true); } },
-                        { title: t.support, subtitle: 'SMARTEYE Help', icon: <User className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />, onClick: () => setIsSupportModalOpen(true) },
-                      ].map((item, idx)=>{
-                        const isLink = 'link' in item && item.link;
-                        const Body = (
-                          <>
-                             <div className="p-2.5 sm:p-3 bg-black/40 rounded-xl text-gray-500 group-hover:border-white/20 group-hover:text-white transition-colors w-fit mb-3 sm:mb-4 border border-white/5 shadow-inner">
-                              {item.icon}
+                    {/* Email Status Item */}
+                    <div className="flex-1 flex items-center gap-4 sm:gap-5 landscape:gap-3 p-4 sm:p-5 landscape:p-2 rounded-[1.25rem] sm:rounded-[1.5rem] bg-white/[0.02] border border-white/5 shadow-inner transition-colors hover:border-white/10">
+                      <div className="w-10 h-10 sm:w-14 sm:h-14 landscape:w-9 landscape:h-9 rounded-xl sm:rounded-2xl bg-black/40 border border-white/5 flex items-center justify-center text-gray-400">
+                        <CheckCircle size={isLandscape ? 18 : (window.innerWidth < 640 ? 18 : 24)} strokeWidth={1.5} />
+                      </div>
+                      <div className="flex flex-col">
+                        <div className="text-[8px] sm:text-[10px] landscape:text-[8px] font-black text-gray-500 uppercase tracking-widest mb-1 sm:mb-1.5 landscape:mb-0.5">
+                          {language === 'ru' ? 'СТАТУС ПОЧТЫ' : 'EMAIL STATUS'}
+                        </div>
+                        <div className="text-sm sm:text-lg landscape:text-xs font-black text-white tracking-tight leading-none flex items-center gap-2">
+                          {language === 'ru' ? 'Подтверждена' : 'Confirmed'}
+                          <Check size={isLandscape ? 12 : 16} className="text-white" strokeWidth={3} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Subscription Dates Block - Combined Purchase and Expiration */}
+                    <div className="flex-1 flex items-center gap-4 sm:gap-5 landscape:gap-3 p-4 sm:p-5 landscape:p-2 rounded-[1.25rem] sm:rounded-[1.5rem] bg-white/[0.02] border border-white/5 border-b-white/50 shadow-inner transition-colors hover:border-white/10">
+                      <div className="w-10 h-10 sm:w-14 sm:h-14 landscape:w-9 landscape:h-9 rounded-xl sm:rounded-2xl bg-black/40 border border-white/5 flex items-center justify-center text-gray-400">
+                        <Zap size={isLandscape ? 18 : (window.innerWidth < 640 ? 18 : 24)} strokeWidth={1.5} />
+                      </div>
+                      <div className="flex flex-col">
+                        <div className="text-[8px] sm:text-[10px] landscape:text-[8px] font-black text-gray-500 uppercase tracking-widest mb-1 sm:mb-1.5 landscape:mb-0.5">
+                          {language === 'ru' ? 'ДАТА ПОКУПКИ - ОКОНЧАНИЕ ПОДПИСКИ' : 'PURCHASE DATE - SUBSCRIPTION EXPIRES'}
+                        </div>
+                        <div className="text-sm sm:text-lg landscape:text-xs font-black text-white tracking-tight leading-none">
+                          {premiumEndDate === t.no_active_subscription ? (language === 'ru' ? 'Нет' : 'None') : (
+                            <div className="flex items-center gap-1.5">
+                              <span>{getFormattedDate(premiumHistory.length > 0 ? [...premiumHistory].sort((a,b) => new Date(b.purchase_date).getTime() - new Date(a.purchase_date).getTime())[0].purchase_date : null)}</span>
+                              <span className="text-gray-500">-</span>
+                              <span>
+                                {/^\d{4}-\d{2}-\d{2}T/.test(premiumEndDate) 
+                                  ? new Date(premiumEndDate).toLocaleDateString(language === 'ru' ? 'ru-RU' : 'en-US', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                                  : premiumEndDate}
+                              </span>
                             </div>
-                            <div>
-                              <div className="text-xs sm:text-sm font-black text-white mb-1 group-hover:text-white transition-colors whitespace-pre-line">{item.title}</div>
-                              <div className="text-[9px] sm:text-[10px] text-gray-500 font-bold">{item.subtitle}</div>
-                            </div>
-                          </>
-                        );
-
-                        if (isLink) {
-                          return (
-                            <a key={idx} href={(item as any).link} target="_blank" rel="noopener noreferrer" className="flex flex-col p-4 sm:p-6 rounded-2xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 transition-all group aspect-video sm:aspect-auto sm:min-h-[140px] lg:aspect-square">
-                              {Body}
-                            </a>
-                          );
-                        }
-
-                        return (
-                          <button key={idx} onClick={(item as any).onClick} className="flex flex-col p-4 sm:p-6 rounded-2xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 transition-all group text-left aspect-video sm:aspect-auto sm:min-h-[140px] lg:aspect-square">
-                            {Body}
-                          </button>
-                        );
-                      })}
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
+              {/* Useful Links - SWAPPED Down */}
+              <div className="sm:col-span-2 lg:col-span-3 landscape:col-span-2 bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-4 sm:p-5 landscape:p-4 backdrop-blur-2xl transition-all shadow-[0_0_40px_rgba(255,255,255,0.03)] flex flex-col">
+                <h3 className="text-[10px] sm:text-sm font-black text-gray-500 uppercase tracking-[0.25em] mb-3 sm:mb-4 flex items-center gap-3">
+                  <LinkIcon size={14} className="text-gray-600" /> {t.useful_links}
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-4">
+                  {[
+                    { title: 'Telegram', subtitle: language === 'ru' ? 'Наше сообщество' : 'Our Community', icon: <MessageCircle className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />, link: 'https://t.me/+Hm-fim1iQl4yZTEy' },
+                    { title: t.read_terms, subtitle: '', icon: <Shield className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />, onClick: () => { setLegalModalType('privacy'); setIsLegalModalOpen(true); } },
+                    { title: t.support, subtitle: 'SMARTEYE Help', icon: <Headset className="w-4 h-4 sm:w-[18px] sm:h-[18px]" />, onClick: () => {
+                      setActiveTab('support');
+                    }},
+                  ].map((item, idx)=>{
+                    const isLink = 'link' in item && item.link;
+                    const Body = (
+                      <>
+                         <div className="p-2 sm:p-2.5 bg-black/40 rounded-xl text-gray-500 group-hover:border-white/20 group-hover:text-white transition-colors w-fit mb-1.5 sm:mb-2 border border-white/5 shadow-inner">
+                          {item.icon}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[10px] sm:text-sm font-black text-white mb-0.5 sm:mb-1 group-hover:text-white transition-colors whitespace-pre-line truncate sm:whitespace-normal">{item.title}</div>
+                          <div className="text-[7px] sm:text-[10px] text-gray-500 font-bold truncate">{item.subtitle}</div>
+                        </div>
+                      </>
+                    );
+
+                    if (isLink) {
+                      return (
+                        <a key={idx} href={(item as any).link} target="_blank" rel="noopener noreferrer" className="flex flex-col p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 transition-all group min-h-[70px] sm:min-h-[100px]">
+                          {Body}
+                        </a>
+                      );
+                    }
+
+                    return (
+                      <button key={idx} onClick={(item as any).onClick} className="flex flex-col p-3 sm:p-4 rounded-xl sm:rounded-2xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 transition-all group text-left min-h-[70px] sm:min-h-[100px]">
+                        {Body}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
               {/* Products & Services Section - FULL WIDTH AT BOTTOM */}
-              <div className="bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-8 backdrop-blur-2xl transition-all relative overflow-hidden group shadow-[0_0_40px_rgba(255,255,255,0.03)] focus-within:ring-2 focus-within:ring-white/20">
+              <div className="bg-[#0c0c0e]/95 border border-white/20 rounded-[1.25rem] sm:rounded-[2rem] p-3 sm:p-8 backdrop-blur-2xl transition-all relative overflow-hidden group shadow-[0_0_40px_rgba(255,255,255,0.03)] focus-within:ring-2 focus-within:ring-white/20">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 blur-[100px] -mr-32 -mt-32 group-hover:bg-white/10 transition-all duration-1000" />
                 
-                <h3 className="text-[14px] font-black text-gray-500 uppercase tracking-[0.25em] mb-8 flex items-center gap-4">
-                  <Zap size={20} className="text-gray-600" /> {t.products_services}
+                <h3 className="text-[9px] sm:text-[14px] font-black text-gray-500 uppercase tracking-[0.25em] mb-3 sm:mb-8 flex items-center gap-2 sm:gap-4">
+                  <Zap size={12} className="sm:w-5 sm:h-5 text-gray-600" /> {t.products_services}
                 </h3>
                 
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-2 sm:gap-4">
                   {[
                     { title: t.screener_service, icon: LayoutGrid },
                     { title: t.coin_screener_service, icon: Search },
@@ -980,12 +1260,12 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                   ].map((item, idx) => (
                     <div 
                         key={idx} 
-                        className="flex flex-col items-center justify-center p-5 rounded-[1.5rem] bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 active:bg-white/[0.08] transition-all group/svc text-center min-h-[120px] overflow-hidden"
+                        className="flex flex-col items-center justify-center p-2 sm:p-5 rounded-lg sm:rounded-[1.5rem] bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 active:bg-white/[0.08] transition-all group/svc text-center min-h-[60px] sm:min-h-[120px] overflow-hidden"
                       >
-                      <div className="p-3 bg-black/40 rounded-2xl text-gray-500 group-hover/svc:text-white group-hover/svc:scale-110 group-hover/svc:shadow-[0_0_20px_rgba(255,255,255,0.15)] transition-all mb-4 border border-white/5 flex items-center justify-center">
-                        <item.icon className="w-6 h-6" strokeWidth={2} />
+                      <div className="p-1.5 sm:p-3 bg-black/40 rounded-lg sm:rounded-2xl text-white group-hover/svc:scale-110 group-hover/svc:shadow-[0_0_20px_rgba(255,255,255,0.15)] transition-all mb-1.5 sm:mb-4 border border-white/5 flex items-center justify-center">
+                        <item.icon className="w-3.5 h-3.5 sm:w-6 sm:h-6" strokeWidth={2} />
                       </div>
-                      <div className="text-[10px] sm:text-[11px] font-black text-gray-300 group-hover/svc:text-white transition-colors leading-tight px-1">
+                      <div className="text-[7.5px] sm:text-[11px] font-black text-gray-300 group-hover/svc:text-white transition-colors leading-tight px-0.5 sm:px-1">
                         {item.title}
                       </div>
                     </div>
@@ -996,80 +1276,89 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
           )}
 
             {activeTab === 'affiliate' && (
-              <div className="bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-8 backdrop-blur-2xl transition-all shadow-[0_0_40px_rgba(255,255,255,0.03)] animate-in fade-in slide-in-from-bottom-4 duration-500 relative overflow-hidden">
-                <div 
-                  onClick={() => document.getElementById('withdraw-section')?.scrollIntoView({ behavior: 'smooth' })}
-                  className="absolute top-8 right-8 flex items-center gap-3 p-3 bg-[#0c0c0e]/95 border border-white/20 rounded-2xl backdrop-blur-2xl cursor-pointer hover:bg-white/[0.08] transition-all group z-10 shadow-[0_0_40px_rgba(255,255,255,0.03)]"
-                >
-                  <div className="w-10 h-10 bg-white/[0.05] rounded-xl flex items-center justify-center border border-white/10 group-hover:border-purple-500/30 transition-colors">
-                    <Wallet size={20} className="text-gray-400 group-hover:text-purple-400 transition-colors" />
+              <div className="bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-4 sm:p-8 landscape:p-3 backdrop-blur-2xl transition-all shadow-[0_0_40px_rgba(255,255,255,0.03)] animate-in fade-in slide-in-from-bottom-4 duration-500 relative overflow-hidden">
+                <div className="flex flex-col md:flex-row items-center justify-between mb-4 sm:mb-8 landscape:mb-2 pb-4 sm:pb-8 landscape:pb-2 border-b border-white/5 gap-4 sm:gap-6 landscape:gap-3">
+                  <div className="flex items-center gap-4">
+                    <div className="h-8 sm:h-10 w-1 bg-white/20 rounded-full"></div>
+                    <div>
+                      <h3 className="text-lg sm:text-xl font-black text-white uppercase tracking-wider">{t.affiliate}</h3>
+                      <div className="text-[8px] sm:text-[10px] text-gray-500 font-medium uppercase tracking-widest mt-0.5 sm:mt-1">
+                        Professional Affiliate Terminal v2.0
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right pr-1">
-                    <div className="text-[9px] text-gray-500 font-black uppercase tracking-widest mb-0.5">{language === 'ru' ? 'Кошелек' : 'Wallet'}</div>
-                    <div className="text-sm font-black text-white">${earningsSummary.available_balance.toFixed(2)}</div>
+                  
+                  <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto">
+                    <button 
+                      onClick={() => {
+                        setIsLoadingPartnerData(true);
+                        Promise.all([
+                          apiService.getPremiumHistory(dbUser?.id || userId),
+                          apiService.getReferrals(dbUser?.id || userId),
+                          apiService.getEarningsSummary(dbUser?.id || userId)
+                        ]).then(([history, refs, summary]) => {
+                          setPremiumHistory(history);
+                          setReferrals(refs);
+                          setEarningsSummary(summary);
+                          showToast(language === 'ru' ? 'Данные обновлены' : 'Data updated', 'success');
+                        }).finally(() => setIsLoadingPartnerData(false));
+                      }}
+                      className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2 sm:py-3 bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl text-gray-400 hover:text-white hover:bg-white/10 transition-all group"
+                    >
+                      <RotateCcw size={14} className={`${isLoadingPartnerData ? 'animate-spin' : 'group-hover:rotate-180'} transition-transform duration-500`} />
+                      <span className="text-[8px] sm:text-[10px] font-black uppercase tracking-widest">{language === 'ru' ? 'Обновить' : 'Refresh'}</span>
+                    </button>
+
+                    <div 
+                      onClick={() => document.getElementById('withdraw-section')?.scrollIntoView({ behavior: 'smooth' })}
+                      className="flex-1 sm:flex-none flex items-center gap-3 p-2 sm:p-3 bg-white/5 border border-white/10 rounded-xl sm:rounded-2xl cursor-pointer hover:bg-white/[0.08] transition-all group"
+                    >
+                      <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white/[0.05] rounded-lg sm:rounded-xl flex items-center justify-center border border-white/10 group-hover:border-purple-500/30 transition-colors">
+                        <Wallet size={16} className="text-gray-400 group-hover:text-purple-400 transition-colors" />
+                      </div>
+                      <div className="text-right pr-1">
+                        <div className="text-[7px] sm:text-[9px] text-gray-500 font-black uppercase tracking-widest">{language === 'ru' ? 'Кошелек' : 'Wallet'}</div>
+                        <div className="text-xs sm:text-sm font-black text-white">${earningsSummary.available_balance.toFixed(2)}</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
                 <div className="max-w-5xl mx-auto">
-                  <div className="flex flex-col md:flex-row items-start gap-6 md:gap-8 mb-12">
-                    <div className="flex w-24 h-24 bg-[#0c0c0e]/95 rounded-3xl items-center justify-center border border-white/20 shrink-0 shadow-[0_0_40px_rgba(255,255,255,0.03)]">
-                      <Users size={48} className="text-white" />
+                  <div className="flex flex-col md:flex-row items-center md:items-start gap-4 md:gap-8 mb-8 sm:mb-12 landscape:mb-4">
+                    <div className="flex w-16 h-16 sm:w-24 sm:h-24 bg-[#0c0c0e]/95 rounded-2xl sm:rounded-3xl items-center justify-center border border-white/20 shrink-0 shadow-[0_0_40px_rgba(255,255,255,0.03)]">
+                      <Users size={32} className="text-white sm:size-48" />
                     </div>
-                    <div className="flex-1 text-left pt-2">
-                      <div className="flex flex-wrap justify-start gap-3 md:gap-4 mb-6">
-                        <div className="px-4 md:px-6 py-2.5 md:py-3 bg-[#0c0c0e]/95 border border-white/20 rounded-2xl text-[10px] md:text-[11px] font-black text-white uppercase tracking-[0.15em] backdrop-blur-2xl shadow-xl hover:bg-white/[0.15] transition-all">
-                          {language === 'ru' ? 'Ваш доход: 20%' : 'Your Income: 20%'}
+                    <div className="flex-1 text-center md:text-left pt-1">
+                      <div className="flex flex-wrap justify-center md:justify-start gap-2 md:gap-4 mb-4 sm:mb-6">
+                        <div className="px-3 sm:px-6 py-2 sm:py-3 bg-[#0c0c0e]/95 border border-white/20 rounded-xl sm:rounded-2xl text-[8px] sm:text-[11px] font-black text-white uppercase tracking-[0.1em] sm:tracking-[0.15em] backdrop-blur-2xl">
+                          {language === 'ru' ? 'Доход: 20%' : 'Income: 20%'}
                         </div>
-                        <div className="px-4 md:px-6 py-2.5 md:py-3 bg-[#0c0c0e]/95 border border-white/20 rounded-2xl text-[10px] md:text-[11px] font-black text-white uppercase tracking-[0.15em] backdrop-blur-2xl shadow-xl hover:bg-white/[0.15] transition-all">
-                          {language === 'ru' ? 'Скидка рефералу: 10%' : 'Referral Discount: 10%'}
+                        <div className="px-3 sm:px-6 py-2 sm:py-3 bg-[#0c0c0e]/95 border border-white/20 rounded-xl sm:rounded-2xl text-[8px] sm:text-[11px] font-black text-white uppercase tracking-[0.1em] sm:tracking-[0.15em] backdrop-blur-2xl">
+                          {language === 'ru' ? 'Скидка: 10%' : 'Discount: 10%'}
                         </div>
                       </div>
-                      <p className="text-white/90 text-sm md:text-base leading-relaxed max-w-2xl">{t.affiliate_desc}</p>
+                      <p className="text-white/80 text-xs sm:text-base leading-relaxed max-w-2xl">{t.affiliate_desc}</p>
                     </div>
                   </div>
                   
-                  {partnerError && (
-                    <div className="mb-8 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 text-sm font-bold flex items-center gap-3 animate-in fade-in slide-in-from-top-4">
-                      <AlertCircle size={20} />
-                      {partnerError}
-                    </div>
-                  )}
-
-                  <div className="relative group mb-12">
-                    <div className="relative flex items-center gap-4 p-4 bg-[#0c0c0e]/95 border border-white/20 rounded-2xl backdrop-blur-2xl">
-                      <div className="flex-1 text-left font-mono text-sm text-white truncate px-2">
-                        {referralLink}
-                      </div>
-                      <button 
-                        onClick={handleCopy}
-                        className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all ${copied ? 'bg-green-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
-                      >
-                        {copied ? <Check size={14} /> : <Copy size={14} />}
-                        {copied ? t.copied_label : t.copy_link}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-8">
-                    {[
-                      { id: 'referrals', icon: <Users size={40} className="text-white" />, count: referrals.length, label: language === 'ru' ? 'Всего партнеров' : 'Total Partners', iconSmall: <Users size={12} className="text-white" /> },
-                      { id: 'clicks', icon: <MousePointerClick size={40} className="text-white" />, count: 175, label: language === 'ru' ? 'Клики по ссылке' : 'Link Clicks', iconSmall: <MousePointerClick size={12} className="text-white" /> },
-                      { id: 'paid', icon: <CheckCircle size={40} className="text-green-400" />, count: referrals.filter(r => r.status === 'paid').length, label: language === 'ru' ? 'Выплачено' : 'Paid', iconSmall: <CheckCircle size={12} className="text-green-400" /> },
-                      { id: 'unpaid', icon: <Clock size={40} className="text-gray-400" />, count: lastWithdrawDate + ' / ' + todayDate, label: language === 'ru' ? 'Период выплат' : 'Payout Period', iconSmall: <Clock size={12} className="text-gray-400" />, isDates: true },
-                      { id: 'income', icon: <TrendingUp size={40} className="text-green-400" />, count: '$' + earningsSummary.total_earnings.toFixed(2), label: language === 'ru' ? 'Общий доход с рефералов' : 'Total Referral Income', iconSmall: <TrendingUp size={12} className="text-green-400" /> },
-                    ].map((btn) => (
+                  <div className="grid grid-cols-2 landscape:grid-cols-3 md:grid-cols-6 gap-2 sm:gap-4 mt-6 sm:mt-8">
+                      {[
+                        { id: 'referrals', icon: <Users size={16} className="text-white sm:size-40" />, count: referrals.length, label: language === 'ru' ? 'Партнеры' : 'Partners', iconSmall: <Users size={10} className="text-white sm:size-12" /> },
+                        { id: 'clicks', icon: <MousePointerClick size={16} className="text-white sm:size-40" />, count: earningsSummary.total_clicks, label: language === 'ru' ? 'Клики' : 'Clicks', iconSmall: <MousePointerClick size={10} className="text-white sm:size-12" /> },
+                        { id: 'paid_pending', icon: <CheckCircle size={16} className="text-green-400 sm:size-40" />, count: earningsSummary.paid_referrals_pending, label: language === 'ru' ? 'Оплаченные' : 'Paid', iconSmall: <CheckCircle size={10} className="text-green-400 sm:size-12" /> },
+                        { id: 'unpaid', icon: <Clock size={16} className="text-gray-400 sm:size-40" />, count: lastWithdrawDate || (language === 'ru' ? 'Нет' : 'None'), label: language === 'ru' ? 'Выплаты' : 'Payouts', iconSmall: <Clock size={10} className="text-gray-400 sm:size-12" />, isDates: !!lastWithdrawDate },
+                        { id: 'income', icon: <TrendingUp size={16} className="text-green-400 sm:size-40" />, count: '$' + earningsSummary.total_earnings.toFixed(2), label: language === 'ru' ? 'Доход' : 'Income', iconSmall: <TrendingUp size={10} className="text-green-400 sm:size-12" /> },
+                      ].map((btn) => (
                       <button 
                         key={btn.id}
                         onClick={() => setActiveStatsTab(btn.id as any)}
-                        className={`p-6 rounded-[2rem] border backdrop-blur-2xl relative overflow-hidden group transition-all text-left aspect-square lg:aspect-[4/5] shadow-[0_0_40px_rgba(255,255,255,0.03)] ${activeStatsTab === btn.id ? 'bg-white/[0.08] border-white/40 ring-1 ring-white/10' : 'bg-[#0c0c0e]/95 border-white/20 hover:bg-[#121215]/95'}`}
+                        className={`p-3 sm:p-6 rounded-2xl sm:rounded-[2rem] border backdrop-blur-2xl relative overflow-hidden group transition-all text-left shadow-[0_0_20px_rgba(255,255,255,0.02)] ${activeStatsTab === btn.id ? 'bg-white/[0.08] border-white/40' : 'bg-[#0c0c0e]/95 border-white/10 hover:bg-[#121215]/95'} ${btn.id === 'income' ? 'col-span-2 md:col-span-2' : ''}`}
                       >
-                        <div className="absolute top-0 right-0 p-3 opacity-30 group-hover:opacity-50 transition-opacity">
-                          {btn.icon}
-                        </div>
-                        <div className={btn.isDates ? "text-sm font-bold text-white mb-1" : "text-2xl font-bold text-white mb-1"}>{btn.count}</div>
-                        <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider flex items-center gap-2">
+                        <div className={`${btn.isDates ? "text-[10px] sm:text-sm" : "text-sm sm:text-2xl"} font-black text-white mb-0.5 sm:mb-1 truncate`}>{btn.count}</div>
+                        <div className="text-[7px] sm:text-[10px] text-gray-500 uppercase font-black tracking-tighter sm:tracking-wider flex items-center gap-1 sm:gap-2">
                           {btn.iconSmall}
-                          {btn.label}
+                          <span className="truncate">{btn.label}</span>
                         </div>
                       </button>
                     ))}
@@ -1113,8 +1402,61 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                                   </div>
                                 </div>
                               )) : (
-                                <div className="text-center py-8 text-gray-500">
-                                  История покупок пуста
+                                <div className="bg-[#121214] rounded-[2.5rem] p-12 flex flex-col items-center text-center space-y-8 border border-white/5 overflow-hidden relative min-h-[400px] justify-center">
+                                  {/* Overlapping Cards Background Pattern (Inspired by Heleket Dashboard) */}
+                                  <div className="absolute top-8 left-1/2 -translate-x-1/2 w-full flex flex-col items-center opacity-30 select-none pointer-events-none">
+                                    {/* Top Card */}
+                                    <div className="w-[85%] h-20 bg-[#1c1c1e] rounded-2xl border border-white/5 shadow-2xl transform -translate-y-4 flex items-center px-6 gap-4">
+                                      <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center border border-green-500/30">
+                                        <Check size={20} className="text-green-500" />
+                                      </div>
+                                      <div className="flex-1 space-y-2">
+                                        <div className="w-24 h-2 bg-white/10 rounded-full" />
+                                        <div className="w-16 h-2 bg-white/5 rounded-full" />
+                                      </div>
+                                      <div className="w-20 h-2 bg-white/10 rounded-full" />
+                                    </div>
+                                    {/* Middle Card */}
+                                    <div className="w-[90%] h-24 bg-[#232326] rounded-2xl border border-white/5 shadow-2xl -mt-12 z-10 flex items-center px-6 gap-4 transform translate-x-2">
+                                      <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center border border-blue-500/30">
+                                        <ArrowLeftRight size={20} className="text-blue-500" />
+                                      </div>
+                                      <div className="flex-1 space-y-2">
+                                        <div className="w-32 h-2 bg-white/10 rounded-full" />
+                                        <div className="w-20 h-2 bg-white/5 rounded-full" />
+                                      </div>
+                                      <div className="w-24 h-2 bg-white/10 rounded-full" />
+                                    </div>
+                                    {/* Bottom Card */}
+                                    <div className="w-[85%] h-20 bg-[#1c1c1e] rounded-2xl border border-white/5 shadow-2xl -mt-10 flex items-center px-6 gap-4 transform -translate-x-4">
+                                      <div className="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center border border-orange-500/30">
+                                        <RotateCcw size={20} className="text-orange-500" />
+                                      </div>
+                                      <div className="flex-1 space-y-2">
+                                        <div className="w-24 h-2 bg-white/10 rounded-full" />
+                                        <div className="w-16 h-2 bg-white/5 rounded-full" />
+                                      </div>
+                                      <div className="w-20 h-2 bg-white/10 rounded-full" />
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="relative z-20 mt-20">
+                                    <h3 className="text-2xl font-black text-white uppercase tracking-tight mb-4">
+                                      {language === 'ru' ? 'Транзакций пока нет' : 'No transactions yet'}
+                                    </h3>
+                                    <p className="text-base text-gray-400 font-bold leading-relaxed max-w-[320px] mx-auto opacity-70">
+                                      {language === 'ru' 
+                                        ? 'Начните использовать Heleket — получите адрес кошелька' 
+                                        : 'Start using Heleket — get your wallet address'}
+                                    </p>
+                                  </div>
+                                  
+                                  <button 
+                                    onClick={() => setActiveTab?.('subscription')}
+                                    className="relative z-20 bg-[#b22222] hover:bg-[#d42d2d] text-white px-12 py-5 rounded-[2rem] font-black uppercase tracking-widest text-sm transition-all hover:scale-105 active:scale-95 shadow-[0_15px_40px_rgba(178,34,34,0.4)]"
+                                  >
+                                    {language === 'ru' ? 'Получить адрес' : 'Get address'}
+                                  </button>
                                 </div>
                               )}
                             </div>
@@ -1196,26 +1538,34 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                             <div className="space-y-6">
                               <h4 className="text-lg font-bold text-white flex items-center gap-2">
                                 <Clock size={20} className="text-gray-400" />
-                                Период накопления
+                                {language === 'ru' ? 'Последние выплаты' : 'Latest Payouts'}
                               </h4>
                               <div className="p-6 bg-white/[0.03] rounded-2xl border border-white/5">
                                 <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-2">
-                                  С момента последней выплаты
+                                  {language === 'ru' ? 'Дата последней выплаты' : 'Last Payout Date'}
                                 </div>
                                 <div className="text-xl font-bold text-white flex items-center gap-3">
-                                  <span>{lastWithdrawDate}</span>
-                                  <ChevronRight size={16} className="text-gray-600" />
-                                  <span className="text-gray-400">{todayDate}</span>
+                                  {lastWithdrawDate ? (
+                                    <>
+                                      <span>{lastWithdrawDate}</span>
+                                      <ChevronRight size={16} className="text-gray-600" />
+                                      <span className="text-gray-400">{todayDate}</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-gray-500">{language === 'ru' ? 'Выплат не было' : 'No payouts yet'}</span>
+                                  )}
                                 </div>
                                 <p className="mt-4 text-xs text-gray-400 leading-relaxed">
-                                  В этом блоке отображается комиссия, накопленная вами за период после последнего успешного вывода средств.
+                                  {language === 'ru' 
+                                    ? 'В этом блоке отображается информация о ваших последних выплатах и текущем периоде накопления.' 
+                                    : 'This block displays information about your latest payouts and the current accumulation period.'}
                                 </p>
                               </div>
                               <div className="p-4 bg-white/[0.05] rounded-xl border border-white/10 backdrop-blur-md">
                                 <div className="text-sm font-bold text-white mb-1">
                                   Текущий баланс
                                 </div>
-                                <div className="text-2xl font-black text-gray-400">${referrals.filter(r => r.status === 'unpaid').reduce((acc, r) => acc + parseFloat(r.commission_amount as any), 0).toFixed(2)}</div>
+                                <div className="text-2xl font-black text-white">${earningsSummary.available_balance.toFixed(2)}</div>
                               </div>
                             </div>
                             <div className="space-y-6">
@@ -1255,6 +1605,103 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                               </div>
                             </div>
                           </div>
+                        ) : activeStatsTab === 'paid_pending' ? (
+                          <div className="space-y-6">
+                            <h4 className="text-lg font-bold text-white flex items-center gap-2">
+                              <CheckCircle size={20} className="text-green-400" />
+                              {language === 'ru' ? 'Оплаченные рефералы' : 'Paid Referrals'}
+                            </h4>
+                            <div className="space-y-3">
+                              {referrals.filter(r => r.status === 'paid').length > 0 ? referrals.filter(r => r.status === 'paid').map((ref, idx) => (
+                                <div key={idx} className="flex items-center justify-between p-4 bg-white/[0.03] rounded-xl border border-white/5">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                                      <User size={18} className="text-green-400" />
+                                    </div>
+                                    <div>
+                                      <div className="text-sm font-bold text-white">{ref.referred_username || ref.referred_email}</div>
+                                      <div className="text-[10px] text-gray-500">
+                                        Оплачено: {new Date(ref.joined_at || ref.created_at).toLocaleDateString(language === 'ru' ? 'ru-RU' : 'en-US')}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-sm font-bold text-green-400">
+                                      +${parseFloat(ref.commission_amount as any).toFixed(2)}
+                                    </div>
+                                    <div className="text-[10px] text-gray-500 uppercase tracking-widest">
+                                      Успешно
+                                    </div>
+                                  </div>
+                                </div>
+                              )) : (
+                                <div className="text-center py-8 text-gray-500">
+                                  {language === 'ru' ? 'У вас пока нет оплаченных рефералов' : 'No paid referrals yet'}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (activeStatsTab as string) === 'system_income' && dbUser?.role === 'admin' ? (
+                          <div className="space-y-6">
+                            <h4 className="text-lg font-bold text-white flex items-center gap-2">
+                              <DollarSign size={20} className="text-yellow-400" />
+                              {language === 'ru' ? 'Доход платформы (Бизнес-аналитика)' : 'Platform Revenue (Business Analytics)'}
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                              <div className="p-6 bg-white/[0.03] rounded-2xl border border-white/5">
+                                <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-2">
+                                  {language === 'ru' ? 'Выручка за всё время' : 'All-time Revenue'}
+                                </div>
+                                <div className="text-3xl font-black text-white">
+                                  ${(earningsSummary.total_system_income || 0).toFixed(2)}
+                                </div>
+                              </div>
+                              <div className="p-6 bg-white/[0.03] rounded-2xl border border-white/5">
+                                <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-2">
+                                  {language === 'ru' ? 'Средний чек' : 'Average Order'}
+                                </div>
+                                <div className="text-xl font-bold text-white">
+                                  ${((earningsSummary.total_system_income || 0) / 10).toFixed(2)}
+                                </div>
+                                <div className="text-[10px] text-green-400 mt-1">↑ 12% vs last month</div>
+                              </div>
+                              <div className="p-6 bg-white/[0.03] rounded-2xl border border-white/5">
+                                <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-2">
+                                  {language === 'ru' ? 'Статус системы' : 'System Status'}
+                                </div>
+                                <div className="flex items-center gap-2 text-green-400 font-bold">
+                                  <Activity size={14} />
+                                  <span>ONLINE</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="p-8 bg-white/[0.02] rounded-[2rem] border border-white/5 h-[300px]">
+                               <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={[
+                                  { name: 'Jan', value: 400 },
+                                  { name: 'Feb', value: 700 },
+                                  { name: 'Mar', value: 500 },
+                                  { name: 'Apr', value: 900 },
+                                  { name: 'May', value: 1200 },
+                                  { name: 'Jun', value: 1800 },
+                                ]}>
+                                  <defs>
+                                    <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                                      <stop offset="5%" stopColor="#eab308" stopOpacity={0.3}/>
+                                      <stop offset="95%" stopColor="#eab308" stopOpacity={0}/>
+                                    </linearGradient>
+                                  </defs>
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                                  <XAxis dataKey="name" stroke="#ffffff20" fontSize={10} axisLine={false} tickLine={false} />
+                                  <Tooltip 
+                                    contentStyle={{ backgroundColor: '#0c0c0e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                                    itemStyle={{ color: '#fff' }}
+                                  />
+                                  <Area type="monotone" dataKey="value" stroke="#eab308" fillOpacity={1} fill="url(#colorValue)" strokeWidth={3} />
+                                </AreaChart>
+                              </ResponsiveContainer>
+                            </div>
+                          </div>
                         ) : (
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                             <div className="space-y-6">
@@ -1270,7 +1717,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                                       <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">
                                         Всего кликов
                                       </div>
-                                      <div className="text-2xl font-black text-white">175</div>
+                                      <div className="text-2xl font-black text-white">{earningsSummary.total_clicks}</div>
                                     </div>
                                     <div className="p-4 bg-white/[0.03] rounded-xl border border-white/5">
                                       <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
@@ -1284,7 +1731,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                                           </div>
                                         </div>
                                       </div>
-                                      <div className="text-2xl font-black text-white">142</div>
+                                      <div className="text-2xl font-black text-white">{earningsSummary.total_clicks}</div>
                                     </div>
                                   </div>
                                   <div className="p-6 bg-white/[0.05] rounded-2xl border border-white/10 backdrop-blur-md">
@@ -1295,6 +1742,13 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                                 </div>
                               ) : (
                                 <div className="space-y-4">
+                                  <div className="p-6 bg-green-500/5 rounded-2xl border border-green-500/10 mb-4">
+                                    <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">
+                                      Оплаченные рефералы
+                                    </div>
+                                    <div className="text-3xl font-black text-white">{earningsSummary.paid_referrals_pending}</div>
+                                  </div>
+
                                   <div className="p-6 bg-green-500/5 rounded-2xl border border-green-500/10">
                                     <div className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">
                                       Всего заработано
@@ -1405,6 +1859,14 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                         )}
                       </div>
                       
+                      <div className="p-4 bg-white/[0.03] border border-white/5 rounded-xl">
+                        <p className="text-[10px] text-gray-500 leading-relaxed uppercase tracking-widest text-center">
+                          {language === 'ru' 
+                            ? 'Внимание: При создании заявки на вывод счетчик оплаченных рефералов обнуляется.' 
+                            : 'Note: Creating a withdrawal request resets the paid referrals counter.'}
+                        </p>
+                      </div>
+
                       <button
                         onClick={handleWithdraw}
                         disabled={isWithdrawing || !withdrawAddress.trim() || !withdrawAmount.trim()}
@@ -1553,9 +2015,161 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
               </div>
             )}
 
+            {activeTab === 'support' && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-700 space-y-6 landscape:space-y-3 origin-top w-full">
+                <div className="flex flex-col landscape:max-lg:grid landscape:max-lg:grid-cols-5 lg:grid lg:grid-cols-3 gap-6 landscape:gap-3 lg:h-[80vh] landscape:h-[85vh]">
+                  {/* Contacts Card - Now Second and Narrower on Desktop, First on Mobile Portrait */}
+                  <div className="lg:col-span-1 landscape:max-lg:col-span-2 w-full bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] p-5 sm:p-8 landscape:p-3 backdrop-blur-2xl transition-all shadow-[0_0_40px_rgba(255,255,255,0.03)] flex flex-col justify-between lg:overflow-y-auto order-2 lg:order-1 portrait:order-2 landscape:order-1 landscape:max-lg:h-full origin-top">
+                    <div className="space-y-4 lg:space-y-8 landscape:space-y-2">
+                      <div className="flex items-center gap-4">
+                        <div className="p-2.5 lg:p-3 bg-white/5 rounded-xl border border-white/10">
+                          <Headset size={20} className="text-white lg:w-6 lg:h-6" />
+                        </div>
+                        <div>
+                          <h2 className="text-lg lg:text-xl font-black text-white uppercase tracking-tighter">{t.support_title}</h2>
+                          <p className="text-[8px] lg:text-[9px] text-gray-500 font-black uppercase tracking-widest mt-0.5">SmartEye Support Service</p>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-3 lg:space-y-4 landscape:space-y-1">
+                        <p className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">{language === 'ru' ? 'ПРЯМАЯ СВЯЗЬ' : 'DIRECT CONNECTION'}</p>
+                        
+                        <div className="grid grid-cols-1 gap-2.5 lg:gap-3 landscape:gap-1.5">
+                          <a href="mailto:smarteyepro@mail.ru" className="group flex items-center gap-3 lg:gap-4 p-3 lg:p-4 landscape:p-2 bg-white/[0.03] border border-white/5 rounded-2xl lg:rounded-3xl hover:bg-white/[0.08] transition-all shadow-inner border-l-purple-500/20">
+                            <div className="w-10 h-10 lg:w-12 lg:h-12 landscape:w-8 landscape:h-8 flex items-center justify-center text-white bg-white/5 rounded-xl lg:rounded-2xl flex-shrink-0 border border-white/5 group-hover:scale-110 transition-transform">
+                               <Mail size={18} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[8px] lg:text-[9px] text-gray-500 uppercase font-black mb-0.5">Email</div>
+                              <div className="text-sm lg:text-base font-bold text-white truncate break-all">smarteyepro@mail.ru</div>
+                            </div>
+                          </a>
+
+                          <a href="https://t.me/SmartEye_Support_bot" target="_blank" rel="noopener noreferrer" className="group flex items-center gap-3 lg:gap-4 p-3 lg:p-4 landscape:p-2 bg-white/[0.03] border border-white/5 rounded-2xl lg:rounded-3xl hover:bg-white/[0.08] transition-all shadow-inner border-l-blue-500/20">
+                            <div className="w-10 h-10 lg:w-12 lg:h-12 landscape:w-8 landscape:h-8 flex items-center justify-center text-white bg-white/5 rounded-xl lg:rounded-2xl flex-shrink-0 border border-white/5 group-hover:scale-110 transition-transform">
+                               <MessageCircle size={18} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[8px] lg:text-[9px] text-gray-500 uppercase font-black mb-0.5">Telegram</div>
+                              <div className="text-sm lg:text-base font-bold text-white truncate break-all">@SmartEye_Support_bot</div>
+                            </div>
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 lg:mt-8 space-y-4">
+                       <div className="p-4 lg:p-6 bg-white/[0.02] rounded-2xl lg:rounded-3xl border border-white/5 text-center backdrop-blur-sm">
+                         <p className="text-[10px] lg:text-xs font-black text-white uppercase tracking-widest">
+                           {language === 'ru' ? 'Мы ответим в течении 24 часов' : 'We will reply within 24 hours'}
+                         </p>
+                       </div>
+                    </div>
+                  </div>
+
+                  {/* Real-Time Chat Card - Now Second and Wider */}
+                  <div className="lg:col-span-2 landscape:max-lg:col-span-3 w-full h-[70vh] lg:h-full landscape:max-lg:h-full flex flex-col bg-[#0c0c0e]/95 border border-white/20 rounded-[2rem] overflow-hidden backdrop-blur-2xl transition-all shadow-[0_0_40px_rgba(255,255,255,0.03)] order-1 lg:order-2 portrait:order-1 landscape:order-2 min-h-[400px] landscape:min-h-0">
+                    {/* Chat Header */}
+                    <div className="p-4 sm:p-6 landscape:p-1.5 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
+                       <div className="flex items-center gap-3 min-w-0">
+                          <span className="text-[10px] sm:text-xs font-black text-white uppercase tracking-widest truncate landscape:text-[9px]">{t.support_title}</span>
+                          <Headset size={16} className="text-white flex-shrink-0 landscape:w-3 landscape:h-3" />
+                       </div>
+                       <button 
+                          onClick={async () => {
+                            setIsRefreshingSupport(true);
+                            await supportService.refreshMessages();
+                            setTimeout(() => setIsRefreshingSupport(false), 500);
+                          }}
+                          className={`p-2 rounded-lg hover:bg-white/5 transition-all ${isRefreshingSupport ? 'animate-spin' : ''}`}
+                       >
+                          <RotateCcw size={14} className="text-gray-500 hover:text-white" />
+                       </button>
+                    </div>
+
+                    {/* Messages Area */}
+                    <div 
+                      ref={scrollRef}
+                      className="flex-1 overflow-y-auto p-6 landscape:p-4 space-y-6 landscape:space-y-3 scrollbar-hide bg-black/20"
+                      style={{ scrollBehavior: 'smooth' }}
+                    >
+                      {supportMessages.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center opacity-30 text-center px-10">
+                          <div className="p-4 border border-dashed border-white/20 rounded-full mb-4">
+                            <MessageCircle size={32} />
+                          </div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.2em]">{t.support_placeholder}</p>
+                        </div>
+                      ) : (
+                        supportMessages.map((msg, idx) => {
+                          const isUser = msg.sender_type === 'user';
+                          return (
+                            <div 
+                              key={msg.id || idx}
+                              className={`flex ${isUser ? 'justify-end' : 'justify-start'} group items-end gap-3`}
+                            >
+                              {!isUser && (
+                                <div className="w-8 h-8 flex items-center justify-center text-white">
+                                  <Headset size={14} />
+                                </div>
+                              )}
+                              <div className="flex flex-col gap-1.5 landscape:gap-0.5 max-w-[85%]">
+                                {!isUser && (
+                                  <div className="text-[9px] font-black text-gray-600 uppercase tracking-[0.2em] mb-0.5 text-left ml-1">
+                                    SmartEye Support
+                                  </div>
+                                )}
+                                <div className={`relative px-5 py-4 rounded-2xl transition-all landscape:px-3 landscape:py-2 ${
+                                  isUser 
+                                  ? 'bg-white/[0.05] border border-white/12 rounded-br-sm group-hover:bg-white/[0.08] backdrop-blur-md shadow-inner' 
+                                  : 'bg-white/[0.03] border border-white/8 rounded-bl-sm text-gray-200 backdrop-blur-md'
+                                }`}>
+                                  <p className="text-sm leading-relaxed tracking-wide font-medium landscape:text-xs">{msg.message}</p>
+                                </div>
+                                <span className={`text-[9px] landscape:text-[7px] font-mono opacity-30 uppercase tracking-tighter ${isUser ? 'text-right mr-1' : 'text-left ml-1'}`}>
+                                  {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Input Area */}
+                    <div className="p-6 landscape:p-2 bg-white/[0.01] border-t border-white/[0.05]">
+                      <div className="relative flex items-center gap-3 landscape:gap-1.5">
+                        <div className="flex-1 min-h-[48px] lg:min-h-[140px] landscape:md:min-h-[100px] landscape:min-h-[32px] bg-black/40 border border-white/10 rounded-2xl flex items-start p-4 landscape:p-2 group focus-within:border-white/20 transition-all backdrop-blur-sm">
+                          <textarea
+                            value={supportMessage}
+                            onChange={(e) => setSupportMessage(e.target.value)}
+                            onKeyDown={(e) => {
+                               if (e.key === 'Enter' && !e.shiftKey) {
+                                 e.preventDefault();
+                                 handleSendSupport();
+                               }
+                            }}
+                            placeholder={t.support_type_message || "Напишите сообщение..."}
+                            className="w-full h-full min-h-[20px] lg:min-h-[100px] bg-transparent border-none outline-none text-white text-sm landscape:text-xs placeholder-gray-700 font-bold resize-none py-1"
+                          />
+                        </div>
+                        <button
+                          disabled={!supportMessage.trim() || isSendingSupport}
+                          onClick={handleSendSupport}
+                          className="w-12 h-12 lg:h-auto lg:self-stretch landscape:w-8 landscape:h-8 rounded-2xl bg-white text-black flex items-center justify-center shadow-lg active:scale-95 transition-all disabled:opacity-30"
+                        >
+                          {isSendingSupport ? <Loader2 size={18} className="animate-spin landscape:w-4 landscape:h-4" /> : <Send size={18} className="landscape:w-4 landscape:h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Tiger Trade Section - Now at the absolute bottom of profile content area */}
-            {activeTab !== 'affiliate' && activeTab !== 'guide' && (
-              <div className="w-full mt-12 sm:mt-24 border-t border-white/5 pt-12 sm:pt-24 opacity-90 hover:opacity-100 transition-opacity">
+            {activeTab !== 'affiliate' && activeTab !== 'guide' && activeTab !== 'support' && (
+              <div className="w-full mt-8 sm:mt-12 border-t border-white/5 pt-8 sm:pt-12 opacity-90 hover:opacity-100 transition-opacity">
                 <PartnersSection 
                   language={language} 
                   subscriptionTier={subscriptionTier}
@@ -1667,7 +2281,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                         }}
                         className={`flex flex-col items-center gap-4 group ${isTierLocked(tier) ? 'cursor-not-allowed' : ''}`}
                       >
-                        <div className={`w-10 h-10 sm:w-14 sm:h-14 rounded-full border-2 flex items-center justify-center text-sm sm:text-xl font-black transition-all duration-500 ${
+                        <div className={`w-10 h-10 sm:w-14 sm:h-14 rounded-full border flex items-center justify-center text-sm sm:text-xl font-black transition-all duration-500 ${
                           avatarTier === tier 
                           ? 'bg-white text-black border-white scale-125 shadow-[0_0_30px_rgba(255,255,255,0.3)]' 
                           : isTierLocked(tier)
@@ -1679,7 +2293,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                         <div className={`text-[10px] sm:text-xs font-black uppercase tracking-widest transition-colors duration-500 ${
                           avatarTier === tier ? 'text-white' : 'text-gray-600'
                         }`}>
-                          {tier === 'free' ? t.plan_free : tier === '1month' ? t.plan_1month : tier === '3months' ? t.plan_3months : t.plan_1year}
+                          {tier === 'free' ? t.plan_free : tier === '1month' ? t.plan_1month : tier === '6months' ? t.plan_6months : t.plan_1year}
                         </div>
                       </button>
                     ))}
@@ -1691,6 +2305,38 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                 </div>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isCheckingPayment && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-3xl"
+          >
+            <div className="text-center space-y-8">
+              <div className="relative">
+                <div className="w-24 h-24 rounded-full border border-white/5 flex items-center justify-center mx-auto">
+                   <div className="w-16 h-16 rounded-full border-t border-purple-500 animate-spin" />
+                </div>
+                <div className="absolute inset-0 bg-purple-500/20 blur-3xl rounded-full scale-150 animate-pulse" />
+              </div>
+              
+              <div className="space-y-2">
+                <h2 className="text-2xl font-black text-white tracking-widest uppercase">{t.waiting_payment}</h2>
+                <p className="text-[10px] font-black text-gray-500 tracking-[0.3em] uppercase animate-pulse">{t.verifying_subscription}</p>
+              </div>
+
+              <button 
+                onClick={() => setIsCheckingPayment(false)}
+                className="px-8 py-3 rounded-xl bg-white/5 border border-white/10 text-[10px] font-black text-gray-400 uppercase tracking-widest hover:text-white hover:bg-white/10 transition-all active:scale-95"
+              >
+                {t.cancel}
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1762,7 +2408,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
         onNavigate={(target) => {
           if (target === 'affiliate') {
             setActiveTab('affiliate');
-            window.scrollTo({ top: 0, behavior: 'smooth' });
+            mainScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
           } else if (target === 'screener') {
             onBack('screener');
           } else if (target === 'market' || target === 'simulator') {
@@ -1798,13 +2444,28 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
               {/* Header */}
               <div className="relative z-10 p-6 border-b border-white/5 bg-white/2 backdrop-blur-sm flex items-center justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600/30 to-blue-600/30 flex items-center justify-center border border-white/10">
-                    <Headset size={20} className="text-purple-400" />
+                  <div className="w-10 h-10 flex items-center justify-center text-white">
+                    <Headset size={20} />
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-white uppercase tracking-wider">{t.support_title}</h2>
                     <div className="flex items-center gap-1.5 mt-0.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                      <Headset size={10} className="text-green-500" />
+                      <button 
+                        onClick={async () => {
+                          setIsRefreshingSupport(true);
+                          await supportService.refreshMessages();
+                          setTimeout(() => setIsRefreshingSupport(false), 500);
+                        }}
+                        className="flex items-center gap-1 text-[9px] text-gray-500 hover:text-purple-400 transition-colors uppercase font-mono tracking-tighter"
+                      >
+                        {isRefreshingSupport ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          <RotateCcw size={10} />
+                        )}
+                        {t.refresh || 'Перезагрузить'}
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -1838,15 +2499,20 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                         className={`flex ${isUser ? 'justify-end' : 'justify-start'} group items-end gap-3`}
                       >
                         {!isUser && (
-                          <div className="w-8 h-8 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.1)]">
+                          <div className="w-8 h-8 flex items-center justify-center text-white">
                             <Headset size={14} />
                           </div>
                         )}
                         <div className="flex flex-col gap-1.5 max-w-[80%]">
+                          {!isUser && (
+                            <div className="text-[9px] font-black text-gray-600 uppercase tracking-[0.2em] mb-0.5 text-left">
+                              SmartEye
+                            </div>
+                          )}
                           <div className={`relative px-4 py-3 rounded-2xl transition-all ${
                             isUser 
-                            ? 'bg-white/5 border border-white/10 rounded-br-sm group-hover:bg-white/10' 
-                            : 'bg-purple-900/10 border border-purple-500/20 rounded-bl-sm text-purple-50/90'
+                            ? 'bg-white/[0.05] border border-white/10 rounded-br-sm group-hover:bg-white/[0.08] backdrop-blur-md shadow-inner' 
+                            : 'bg-white/[0.03] border border-white/5 rounded-bl-sm text-gray-200 backdrop-blur-md'
                           }`}>
                             <p className="text-sm leading-relaxed tracking-wide">{msg.message}</p>
                             
@@ -1867,26 +2533,28 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
               </div>
 
               {/* Input Control Area */}
-              <div className="p-6 bg-white/2 border-t border-white/5">
+              <div className="p-6 bg-white/[0.01] border-t border-white/[0.05]">
                 <div className="relative flex items-center gap-3">
-                  <div className="flex-1 h-12 bg-black/40 border border-white/10 rounded-2xl flex items-center px-4 group focus-within:border-purple-500/50 transition-all">
-                    <input
-                      type="text"
+                  <div className="flex-1 min-h-[48px] lg:min-h-[140px] bg-black/40 border border-white/10 rounded-2xl flex items-start p-4 group focus-within:border-white/20 transition-all backdrop-blur-sm">
+                    <textarea
                       value={supportMessage}
                       onChange={(e) => setSupportMessage(e.target.value)}
                       onKeyDown={(e) => {
-                         if (e.key === 'Enter') handleSendSupport();
+                         if (e.key === 'Enter' && !e.shiftKey) {
+                           e.preventDefault();
+                           handleSendSupport();
+                         }
                       }}
                       placeholder={t.support_type_message || "Напишите сообщение..."}
-                      className="w-full bg-transparent border-none outline-none text-white text-sm placeholder-gray-600 font-medium"
+                      className="w-full h-full min-h-[20px] lg:min-h-[100px] bg-transparent border-none outline-none text-white text-sm placeholder-gray-600 font-medium resize-none py-1"
                     />
                   </div>
                   <button
                     disabled={!supportMessage.trim() || isSendingSupport}
                     onClick={handleSendSupport}
-                    className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-purple-600 to-blue-600 flex items-center justify-center text-white shadow-lg active:scale-95 transition-all disabled:opacity-30 disabled:grayscale"
+                    className="w-12 h-12 lg:h-auto lg:self-stretch rounded-2xl bg-gradient-to-tr from-purple-600 to-blue-600 flex items-center justify-center text-white shadow-lg active:scale-95 transition-all disabled:opacity-30 disabled:grayscale"
                   >
-                    <Send size={18} className={isSendingSupport ? 'animate-pulse' : ''} />
+                    <Send size={18} />
                   </button>
                 </div>
               </div>
@@ -1895,6 +2563,40 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
         )}
       </AnimatePresence>
     </div>
+      {/* Mobile Bottom Navigation Fade Gradient - ALWAYS PINNED OUTSIDE SCROLL */}
+      <div className={`md:hidden fixed bottom-12 left-0 right-0 h-20 bg-gradient-to-t from-black via-black/40 to-transparent pointer-events-none z-[19999] opacity-60 transition-all duration-500 ${isNavVisible ? 'opacity-60 translate-y-0' : 'opacity-0 translate-y-full'}`} />
+
+      {/* Mobile Bottom Navigation - ALWAYS PINNED OUTSIDE SCROLL */}
+      <div className={`md:hidden fixed bottom-0 left-0 right-0 h-14 bg-[#050505]/95 backdrop-blur-2xl flex items-center justify-around px-2 z-[20000] pb-safe border-t border-white/10 shadow-[0_-10px_40px_rgba(0,0,0,0.8)] transition-all duration-500 ${isNavVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full'}`}>
+        {[
+          { id: 'profile', label: t.profile, icon: User },
+          { id: 'subscription', label: t.subscription, icon: Star },
+          { id: 'affiliate', label: t.affiliate, icon: Users },
+          { id: 'guide', label: t.guide, icon: BookOpen },
+          { id: 'support', label: t.support, icon: Headset },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => {
+              setActiveTab(tab.id as any);
+            }}
+            className={`flex flex-col items-center justify-center gap-0.5 w-16 transition-all ${
+              activeTab === tab.id ? 'text-white' : 'text-white/60 active:text-white/90'
+            }`}
+          >
+            {tab.id === 'subscription' ? (
+              <img 
+                src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
+                alt=""
+                className={`w-[18px] h-[18px] flex-shrink-0 transition-all duration-300 drop-shadow-[0_0_8px_rgba(250,204,21,0.4)] ${activeTab === tab.id ? 'scale-110 brightness-125' : 'opacity-85'}`} 
+              />
+            ) : (
+              <tab.icon size={18} className={activeTab === tab.id ? 'scale-110 text-white' : 'text-white/60'} />
+            )}
+            <span className="text-[8px] font-bold uppercase tracking-tighter">{tab.label}</span>
+          </button>
+        ))}
+      </div>
     </>
   );
 };
@@ -1902,7 +2604,7 @@ const PartnersSection: React.FC<{
   language: Language;
   subscriptionTier: 'free' | 'pro' | 'whale';
   setSubscriptionTier: (tier: 'free' | 'pro' | 'whale') => void;
-  setAvatarTier: (tier: 'free' | '1month' | '3months' | '1year') => void;
+  setAvatarTier: (tier: 'free' | '1month' | '6months' | '1year') => void;
   setPremiumEndDate: (date: string) => void;
 }> = ({ 
   language, 
@@ -2095,7 +2797,7 @@ const PartnersSection: React.FC<{
 
   return (
     <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-700">
-      <div className="relative overflow-hidden bg-gradient-to-br from-white/90 via-rose-100/80 to-orange-100/80 rounded-3xl p-5 md:p-8 shadow-2xl group border-2 border-purple-500/30 hover:border-purple-500/50 transition-all duration-500">
+      <div className="relative overflow-hidden bg-gradient-to-br from-white/90 via-rose-100/80 to-orange-100/80 rounded-3xl p-5 md:p-8 shadow-2xl group border border-purple-500/30 hover:border-purple-500/50 transition-all duration-500">
         {/* Content matching the image structure */}
         <div className="relative z-10 space-y-6">
           <div className="space-y-3">
@@ -2142,13 +2844,13 @@ const PartnersSection: React.FC<{
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder={t.account_email_placeholder}
-                  className="flex-1 bg-transparent border-none rounded-lg px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none font-bold"
+                  className="flex-1 bg-transparent border-none rounded-lg px-3 sm:px-4 py-2 sm:py-3 text-[11px] sm:text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none font-bold"
                   required
                 />
                 <button
                   type="submit"
                   disabled={loading}
-                  className="px-6 py-3 bg-black text-white rounded-lg text-xs font-black uppercase tracking-wider hover:bg-gray-900 active:scale-95 transition-all disabled:opacity-50 shadow-lg"
+                  className="px-4 sm:px-6 py-2 sm:py-3 bg-black text-white rounded-lg text-[10px] sm:text-xs font-black uppercase tracking-wider hover:bg-gray-900 active:scale-95 transition-all disabled:opacity-50 shadow-lg"
                 >
                   {loading ? t.analyzing : t.connect_button}
                 </button>

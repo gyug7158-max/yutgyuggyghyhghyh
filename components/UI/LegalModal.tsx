@@ -272,7 +272,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, languag
     }
   };
 
-  const content = type === 'terms' ? termsContent : privacyContent;
+  const content = privacyContent; // Always show the combined Privacy + Terms content as requested
 
   return (
     <AnimatePresence>

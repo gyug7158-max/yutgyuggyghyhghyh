@@ -35,6 +35,7 @@ export class SmarteyeEngineService {
   public longs$ = new BehaviorSubject<RowData[]>([]);
   public shorts$ = new BehaviorSubject<RowData[]>([]);
   public socketCount$ = new BehaviorSubject<number>(0);
+  public connectionStatus$ = new BehaviorSubject<'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED'>('DISCONNECTED');
   public error$ = new Subject<{ exchange: string, marketType: string, message: string, isRegionalBlock: boolean }>();
 
   private marketState: Record<string, SymbolState> = {};
@@ -43,13 +44,13 @@ export class SmarteyeEngineService {
   private proxySocket: WebSocket | null = null;
   private watchdogInterval: any = null;
   private offlineHandler: (() => void) | null = null;
+  private visibilityHandler: (() => void) | null = null;
   private lastMsgTime: number = Date.now();
   private activeConfigs: ExchangeConfig[] = [];
-  private tickerConfigs: { symbol: string, exchange: string, marketType: MarketType }[] = [];
   private tickCounter = 0;
   private lastDeepCleanup = Date.now();
-
-  public ticker$ = new Subject<{ symbol: string, price: number, exchange: string, marketType: MarketType }>();
+  private isReconnecting = false;
+  private reconnectTimer: any = null;
 
   public setRankMap(map: Record<string, number>) {
     this.rankMap = map;
@@ -69,6 +70,15 @@ export class SmarteyeEngineService {
   }
 
   public connectExchanges(configs: ExchangeConfig[]) {
+    // Check if configs are actually different before reconnecting
+    const newConfigsStr = JSON.stringify(configs.sort((a,b) => a.exchange.localeCompare(b.exchange)));
+    const oldConfigsStr = JSON.stringify(this.activeConfigs.sort((a,b) => a.exchange.localeCompare(b.exchange)));
+    
+    if (this.proxySocket?.readyState === WebSocket.OPEN && newConfigsStr === oldConfigsStr) {
+      console.log("[Engine] Configs identical, skipping reconnect");
+      return;
+    }
+
     this.activeConfigs = configs;
     this.disconnectAll();
 
@@ -105,7 +115,13 @@ export class SmarteyeEngineService {
       this.proxySocket.onclose = null;
       this.proxySocket.onerror = null;
       this.proxySocket.onmessage = null;
-      this.proxySocket.close();
+      try { this.proxySocket.close(); } catch (e) {}
+      this.proxySocket = null;
+    }
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
 
     // Use configurable proxy URL if provided, otherwise fallback to current host
@@ -113,52 +129,64 @@ export class SmarteyeEngineService {
     let wsUrl: string;
 
     if (proxyUrl) {
-      wsUrl = proxyUrl;
+      wsUrl = proxyUrl.replace(/\/ws\/(densities|charts)/, '') + '/ws/densities';
     } else {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      wsUrl = `${protocol}//${host}`;
+      wsUrl = `${protocol}//${host}/ws/densities`;
     }
 
     try {
+      this.isReconnecting = true;
       const ws = new WebSocket(wsUrl);
       this.proxySocket = ws;
 
       ws.onopen = () => {
         console.log("[Engine] Connected to Backend Proxy");
+        this.isReconnecting = false;
         this.socketCount$.next(1);
+        this.connectionStatus$.next('CONNECTED');
         ws.send(JSON.stringify({
           type: "CONNECT_EXCHANGES",
-          configs: this.activeConfigs,
-          tickers: this.tickerConfigs
+          configs: this.activeConfigs
         }));
       };
 
       ws.onclose = () => {
-        console.warn("[Engine] Proxy connection closed. Reloading page...");
-        window.location.reload();
+        console.warn("[Engine] Proxy connection closed. Attempting reconnect...");
+        this.handleReconnect();
       };
 
       ws.onerror = (err) => {
         console.error("[Engine] Proxy connection error:", err);
-        window.location.reload();
+        this.handleReconnect();
       };
 
-      // Watchdog: If no message (market data or heartbeat) for 6s, reload
+      // Watchdog: If no message (market data or heartbeat) for 30s, reconnect
+      // Increased to 30s to be more resilient to background tab throttling
       this.lastMsgTime = Date.now();
       this.watchdogInterval = setInterval(() => {
         const timeSinceLastMsg = Date.now() - this.lastMsgTime;
-        if (timeSinceLastMsg > 6000) {
-          console.warn(`[Engine] Connection stall detected (${timeSinceLastMsg}ms). Force reloading...`);
-          window.location.reload();
+        const timeout = document.hidden ? 60000 : 30000;
+        if (timeSinceLastMsg > timeout) {
+          console.warn(`[Engine] Connection stall detected (${timeSinceLastMsg}ms). Reconnecting...`);
+          this.handleReconnect();
         }
-      }, 2000);
+      }, 5000);
 
       this.offlineHandler = () => {
-        console.warn("[Engine] Network offline. Force reloading...");
-        window.location.reload();
+        console.warn("[Engine] Network offline. Moving to disconnected state.");
+        this.handleReconnect();
       };
       window.addEventListener('offline', this.offlineHandler);
+      
+      this.visibilityHandler = () => {
+        if (!document.hidden && this.proxySocket?.readyState === WebSocket.OPEN) {
+          console.log("[Engine] Tab became visible, checking connection health...");
+          this.lastMsgTime = Date.now();
+        }
+      };
+      window.addEventListener('visibilitychange', this.visibilityHandler);
 
       ws.onmessage = (ev) => {
         this.lastMsgTime = Date.now();
@@ -173,8 +201,8 @@ export class SmarteyeEngineService {
 
           if (payload.type === "EXCHANGE_ERROR") {
             if (payload.isDisconnected && !payload.isRegionalBlock) {
-              console.warn("[Engine] Exchange disconnected. Force reloading...");
-              window.location.reload();
+              console.warn("[Engine] Exchange disconnected. Reconnecting proxy...");
+              this.handleReconnect();
               return;
             }
             this.error$.next({
@@ -190,16 +218,6 @@ export class SmarteyeEngineService {
             this.lastMsgTime = Date.now();
             const { exchange, marketType, data } = payload;
             
-            // Handle Ticker Data
-            if (payload.dataType === 'TICKER') {
-              const symbol = (data.s || data.symbol || data.data?.s || data.topic?.split('.').pop())?.toUpperCase();
-              const price = parseFloat(data.c || data.lastPrice || data.data?.lastPrice || data.p);
-              if (symbol && !isNaN(price)) {
-                this.ticker$.next({ symbol, price, exchange, marketType });
-              }
-              return;
-            }
-
             // Extract symbol generically
             const rawSymbol = data.s || data.symbol || data.data?.s || 
                              (data.topic?.split('.').pop()) || 
@@ -248,8 +266,22 @@ export class SmarteyeEngineService {
       };
     } catch (e) {
       console.error("[Engine] Failed to create proxy socket:", e);
-      window.location.reload();
+      this.handleReconnect();
     }
+  }
+
+  private handleReconnect() {
+    this.stopWatchdog();
+    this.isReconnecting = true;
+    this.socketCount$.next(0);
+    this.connectionStatus$.next('RECONNECTING');
+    
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    
+    console.log("[Engine] Connection lost. Attempting silent reconnect in 3s...");
+    this.reconnectTimer = setTimeout(() => {
+      this.connectToProxy();
+    }, 3000);
   }
 
   private stopWatchdog() {
@@ -260,6 +292,10 @@ export class SmarteyeEngineService {
     if (this.offlineHandler) {
       window.removeEventListener('offline', this.offlineHandler);
       this.offlineHandler = null;
+    }
+    if (this.visibilityHandler) {
+      window.removeEventListener('visibilitychange', this.visibilityHandler);
+      this.visibilityHandler = null;
     }
   }
 
@@ -283,7 +319,6 @@ export class SmarteyeEngineService {
 
   public disconnectAll() {
     this.stopWatchdog();
-    this.tickerConfigs = [];
     if (this.proxySocket) {
       this.proxySocket.onopen = null;
       this.proxySocket.onclose = null;
@@ -662,26 +697,11 @@ export class SmarteyeEngineService {
   }
 
   public subscribeTicker(symbol: string, exchange: string, marketType: MarketType) {
-    const exists = this.tickerConfigs.find(t => t.symbol === symbol && t.exchange === exchange && t.marketType === marketType);
-    if (!exists) {
-      this.tickerConfigs.push({ symbol, exchange, marketType });
-      if (this.proxySocket?.readyState === WebSocket.OPEN) {
-        this.proxySocket.send(JSON.stringify({
-          type: "SUBSCRIBE_TICKERS",
-          tickers: [{ symbol, exchange, marketType }]
-        }));
-      }
-    }
+    // Moved to ChartStreamService
   }
 
   public unsubscribeTicker(symbol: string, exchange: string, marketType: MarketType) {
-    this.tickerConfigs = this.tickerConfigs.filter(t => !(t.symbol === symbol && t.exchange === exchange && t.marketType === marketType));
-    if (this.proxySocket?.readyState === WebSocket.OPEN) {
-      this.proxySocket.send(JSON.stringify({
-        type: "UNSUBSCRIBE_TICKERS",
-        tickers: [{ symbol, exchange, marketType }]
-      }));
-    }
+    // Moved to ChartStreamService
   }
 
   private emitData() {

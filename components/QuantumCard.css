@@ -361,9 +361,8 @@
 }
 
 .qc-metric-label {
-  font-size: clamp(7px, 2cqw, 10px);
+  font-size: clamp(8px, 2.8cqw, 12px);
   color: var(--hud-dim);
-  letter-spacing: 0.5px;
   margin-bottom: 2px;
   text-transform: uppercase;
   opacity: 0.8;
@@ -430,7 +429,7 @@
   .qc-hud-content { padding: 8px; gap: 6px; }
   .qc-hud-header { padding-bottom: 6px; }
   .qc-hud-header-left { gap: 6px; }
-  .qc-hud-status { padding: 4px 8px; gap: 6px; }
+  .qc-hud-status { padding: 2px 6px; gap: 4px; }
   .qc-hud-blinker { width: 8px; height: 8px; }
   .qc-logo-bybit { width: 40px; height: 14px; }
   .qc-logo-binance { width: 14px; height: 14px; }
@@ -438,7 +437,7 @@
   .qc-hud-grid { gap: 4px; margin-top: 2px; }
   .qc-hud-ob-section { min-height: 100px; }
   .qc-hud-exchange { font-size: 9px; }
-  .qc-hud-status-text { font-size: 14px; }
+  .qc-hud-status-text { font-size: 11px; }
   .qc-hud-label-tiny { font-size: 9px; }
   .qc-metric-label { font-size: 9px; }
   .qc-hud-footer { font-size: 8px; padding-top: 4px; }

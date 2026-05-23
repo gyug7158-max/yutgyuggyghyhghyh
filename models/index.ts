@@ -288,13 +288,14 @@ export interface DBUser {
   password?: string;
   username: string;
   subscription_tier: 'free' | 'pro' | 'whale';
-  avatar_tier?: 'free' | '1month' | '3months' | '1year';
+  avatar_tier?: 'free' | '1month' | '6months' | '1year';
   premium_end_date?: string;
   telegram_id?: number;
   telegram_username?: string;
   telegram_first_name?: string;
   role: 'user' | 'admin';
   balance: number;
+  is_verified?: boolean;
   created_at: string;
 }
 
@@ -303,6 +304,10 @@ export interface SupportMessage {
   user_id: string;
   message: string;
   sender_type: 'user' | 'admin';
+  sender_role: string;
+  is_read: boolean;
+  status?: 'open' | 'closed';
+  admin_reply?: string;
   created_at: string;
 }
 
@@ -348,4 +353,14 @@ export interface Referral {
   referred_email?: string;
   referred_username?: string;
   joined_at?: string;
+}
+
+export interface EarningsSummary {
+  total_earnings: number;
+  total_withdrawn: number;
+  available_balance: number;
+  paid_referrals_pending: number;
+  total_clicks: number;
+  last_withdraw_date: string | null;
+  total_system_income: number;
 }

@@ -1,19 +1,25 @@
 import express from "express";
+import dotenv from "dotenv";
+dotenv.config();
 import { createServer as createViteServer } from "vite";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
+import url from "url";
 import { WebSocketServer, WebSocket } from "ws";
 import http from "http";
 import jwt from "jsonwebtoken";
 import TelegramBot from 'node-telegram-bot-api';
+import nodemailer from 'nodemailer';
+import { GoogleGenAI } from "@google/genai";
 import { query, initializeDatabase } from "./src/lib/db.ts";
 import { MarketType, ExchangeConfig, SYMBOLS, getConfigsForMarket } from "./models/index.ts";
 import { ServerSmarteyeEngine } from "./src/lib/server-engine.ts";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __filename = import.meta.url ? fileURLToPath(import.meta.url) : '';
+const __dirname = __filename ? path.dirname(__filename) : process.cwd();
 
 // Telegram Bot Setup
 const DEFAULT_BOT_TOKEN = '8277095257:AAG_5Xw_pLGQNqOH27guqfuNQ3fJV9OCbn0';
@@ -59,14 +65,14 @@ bot.getMe().then(me => {
 const isUUID = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
 const PLAN_PRICES: Record<string, number> = {
-  '1month': 100,
-  '3months': 250,
-  '1year': 900
+  '1month': 1520,  // 19 * 80
+  '6months': 7120, // 89 * 80
+  '1year': 13920   // 174 * 80
 };
 
 const PLAN_LABELS: Record<string, string> = {
   '1month': 'Smarteye Pro (1 месяц)',
-  '3months': 'Smarteye Pro (3 месяца)',
+  '6months': 'Smarteye Pro (6 месяцев)',
   '1year': 'Smarteye Whale (1 год)'
 };
 
@@ -141,6 +147,28 @@ bot.on('message', async (msg) => {
   const keywords = ['/start', 'старт', 'start', 'оплата', 'меню', 'menu', 'привет', 'hi'];
   if (keywords.some(k => text.includes(k))) {
     sendWelcomeMessage(chatId);
+  } else if (!text.startsWith('/start')) {
+    // New auto-reply for support as requested by USER
+    bot.sendMessage(chatId, 'Здравствуйте! Мы получили ваше сообщение и ответим в ближайшее время. Спасибо за обращение!').catch(e => console.error('Error sending support reply:', e));
+
+    // Proactively save support message to DB if user is linked
+    if (telegramId) {
+      try {
+        const userRes = await query("SELECT id FROM users WHERE telegram_id = $1", [telegramId]);
+        if (userRes.rows.length > 0) {
+          const userIdForSupport = userRes.rows[0].id;
+          const msgContent = msg.text || '[Media/Non-text message]';
+          await query(
+            "INSERT INTO support_messages (user_id, message, sender_type, sender_role) VALUES ($1, $2, 'user', 'user')",
+            [userIdForSupport, msgContent]
+          );
+          // Sync with users table as well
+          await query("UPDATE users SET support_message = $1 WHERE id = $2", [msgContent, userIdForSupport]);
+        }
+      } catch (err) {
+        console.error('[Bot] Support message storage failed:', err);
+      }
+    }
   }
 });
 
@@ -149,6 +177,27 @@ bot.on('callback_query', async (query_data) => {
   const telegramId = query_data.from?.id;
 
   if (query_data.data === 'buy_subscription' && chatId) {
+    bot.sendMessage(chatId, 'Выберите подходящий тарифный план:', {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '💎 Smarteye Pro (1 месяц) - 1520 ⭐️', callback_data: 'plan_1month' },
+          ],
+          [
+            { text: '💎 Smarteye Pro (6 месяцев) - 7120 ⭐️', callback_data: 'plan_6months' },
+          ],
+          [
+            { text: '🐳 Smarteye Whale (1 год) - 13920 ⭐️', callback_data: 'plan_1year' }
+          ]
+        ]
+      }
+    });
+    return;
+  }
+
+  if (query_data.data && query_data.data.startsWith('plan_') && chatId) {
+    const plan = query_data.data.split('_')[1];
+    
     // Try to find user by telegramId to personalize or check status
     let userId = 'unknown';
     if (telegramId) {
@@ -158,20 +207,20 @@ bot.on('callback_query', async (query_data) => {
       }
     }
 
-    bot.sendInvoice(
-      chatId,
-      'Подписка Smarteye Pro',
-      'Доступ к скринеру плотностей, AI-аналитике и продвинутым графикам на 1 месяц.',
-      `payload_${userId}_1month`,
-      '', // Provider token is empty for Telegram Stars
-      'XTR', // Currency for Telegram Stars
-      [
-        { label: 'Smarteye Pro (1 месяц)', amount: 100 } // Amount in Stars
-      ]
-    ).catch(err => {
-      console.error('Error sending invoice:', err);
-      bot.sendMessage(chatId, 'Ошибка при создании счета. Пожалуйста, попробуйте позже.');
-    });
+    if (PLAN_PRICES[plan]) {
+      bot.sendInvoice(
+        chatId,
+        PLAN_LABELS[plan],
+        `Доступ к профессиональным инструментам анализа на ${plan === '1month' ? '1 месяц' : plan === '6months' ? '6 месяцев' : '1 год'}.`,
+        `payload_${userId}_${plan}`,
+        '', // Provider token is empty for Telegram Stars
+        'XTR', // Currency for Telegram Stars
+        [{ label: PLAN_LABELS[plan], amount: PLAN_PRICES[plan] }]
+      ).catch(err => {
+        console.error('Error sending invoice:', err);
+        bot.sendMessage(chatId, 'Ошибка при создании счета. Пожалуйста, попробуйте позже.');
+      });
+    }
   }
 });
 
@@ -184,6 +233,8 @@ bot.on('successful_payment', async (msg) => {
   const telegramId = msg.from?.id;
   const paymentPayload = msg.successful_payment?.invoice_payload;
   const telegramChargeId = msg.successful_payment?.telegram_payment_charge_id;
+  
+  let fulfilled = false;
   
   if (paymentPayload && paymentPayload.startsWith('payload_')) {
     const parts = paymentPayload.split('_');
@@ -200,72 +251,154 @@ bot.on('successful_payment', async (msg) => {
 
     if (userId !== 'unknown' && PLAN_PRICES[plan]) {
       try {
-        const months = plan === '1month' ? 1 : plan === '3months' ? 3 : 12;
-        const planTier = plan === '1year' ? 'whale' : 'pro';
+        const targetUserId = (isUUID(userId) || !telegramId) ? userId : (await query("SELECT id FROM users WHERE telegram_id = $1", [telegramId])).rows[0]?.id || userId;
         
-        let targetUserId = userId;
-        
-        // If not UUID, we must find the user by telegramId
-        if (!isUUID(targetUserId) && telegramId) {
-          const userResult = await query("SELECT id FROM users WHERE telegram_id = $1", [telegramId]);
-          if (userResult.rows.length > 0) {
-            targetUserId = userResult.rows[0].id;
-          } else {
-            console.error(`Could not fulfill payment: No user linked to Telegram ID ${telegramId} and payload userId ${userId} is not a UUID`);
-            bot.sendMessage(chatId, '❌ Ошибка: Не удалось найти пользователя для активации подписки. Пожалуйста, убедитесь, что вы авторизованы в терминале.');
-            return;
-          }
+        if (!isUUID(targetUserId)) {
+             console.error(`Could not fulfill payment: No user linked to Telegram ID ${telegramId}`);
+             bot.sendMessage(chatId, '❌ Ошибка: Не удалось найти пользователя для активации подписки.');
+             return;
         }
 
-        const expiryDate = new Date();
-        const userResult = await query("SELECT premium_end_date FROM users WHERE id = $1", [targetUserId]);
-        if (userResult.rows.length === 0) {
-           console.error(`User ${targetUserId} not found in database for payment fulfillment`);
-           bot.sendMessage(chatId, '❌ Ошибка: Пользователь не найден.');
-           return;
+        try {
+          const newExpiryDate = await activateUserSubscription(targetUserId, plan as string, telegramChargeId, telegramId);
+          console.log(`Successfully activated subscription ${plan} for user ${targetUserId} via Telegram`);
+          bot.sendMessage(chatId, `✨ Оплата прошла успешно! Подписка ${PLAN_LABELS[plan]} активирована до ${newExpiryDate.toLocaleDateString()}.\n\nОбновите страницу в терминале, чтобы изменения вступили в силу.`);
+          fulfilled = true;
+        } catch (error) {
+          console.error('Failed to update subscription after Telegram payment:', error);
+          bot.sendMessage(chatId, '❌ Произошла ошибка при активации подписки. Пожалуйста, напишите в поддержку.');
+          fulfilled = true; // Still marked as fulfilled so fallback doesn't trigger
         }
-
-        let currentExpiry = userResult.rows[0]?.premium_end_date;
-        let startDate = new Date();
-        
-        if (currentExpiry && new Date(currentExpiry) > new Date()) {
-          startDate = new Date(currentExpiry);
-        }
-        
-        const newExpiryDate = new Date(startDate);
-        newExpiryDate.setMonth(newExpiryDate.getMonth() + months);
-        
-        const avatarTier = plan;
-
-        // Update user in DB
-        await query(
-          "UPDATE users SET subscription_tier = $1, premium_end_date = $2, avatar_tier = $3, telegram_id = COALESCE(telegram_id, $4) WHERE id = $5",
-          [planTier, newExpiryDate, avatarTier, telegramId, targetUserId]
-        );
-
-        // Record purchase
-        await query(
-          "INSERT INTO premium_purchases (user_id, plan_tier, amount, expiry_date, telegram_payment_charge_id) VALUES ($1, $2, $3, $4, $5)",
-          [targetUserId, planTier, PLAN_PRICES[plan], newExpiryDate, telegramChargeId]
-        );
-
-        console.log(`Successfully activated subscription ${plan} for user ${targetUserId}`);
-        bot.sendMessage(chatId, `✨ Оплата прошла успешно! Подписка ${PLAN_LABELS[plan]} активирована до ${newExpiryDate.toLocaleDateString()}.\n\nОбновите страницу в терминале, чтобы изменения вступили в силу.`);
-        return;
-      } catch (error) {
-        console.error('Failed to update subscription after Telegram payment:', error);
-        bot.sendMessage(chatId, '❌ Произошла ошибка при активации подписки. Пожалуйста, напишите в поддержку.');
+      } catch (err) {
+        console.error('Telegram payment processing error:', err);
       }
     }
   }
   
-  // Generic success message if path above didn't return
-  bot.sendMessage(chatId, '✨ Оплата прошла успешно! Если подписка не обновилась в течение нескольких минут, пожалуйста, обратитесь в поддержку.');
+  // Generic success message ONLY if first path didn't send a confirmation
+  if (!fulfilled) {
+    bot.sendMessage(chatId, '✨ Оплата прошла успешно! Если подписка не обновилась в течение нескольких минут, пожалуйста, обратитесь в поддержку.');
+  }
 });
+
+async function sendVerificationEmail(email: string, code: string, type: 'registration' | 'reset' = 'registration') {
+  const host = process.env.SMTP_HOST || 'smtp.mail.ru';
+  const port = parseInt(process.env.SMTP_PORT || '465');
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.FROM_EMAIL || user;
+
+  if (!user || !pass) {
+    const msg = `SMTP credentials missing (User: ${user ? 'OK' : 'MISSING'}, Pass: ${pass ? 'OK' : 'MISSING'}).`;
+    console.error(`[SMTP ERROR] ${msg}`);
+    throw new Error('Настройки почты (SMTP_USER/SMTP_PASS) не найдены в секретах проекта.');
+  }
+
+  const subject = type === 'registration' 
+    ? "Код подтверждения регистрации" 
+    : "Восстановление пароля";
+  
+  const title = type === 'registration'
+    ? "Подтверждение регистрации"
+    : "Восстановление пароля";
+
+  const messageText = type === 'registration'
+    ? "Для завершения регистрации в SmartEye Скринер введите следующий код на странице подтверждения:"
+    : "Для сброса вашего пароля в SmartEye Скринер введите следующий код:";
+
+  console.log(`[SMTP] Отправка кода ${code} на ${email} (${type}) через ${host}:${port}...`);
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+
+  try {
+    await transporter.sendMail({
+      from: `"SmartEye Support" <${from}>`,
+      to: email,
+      subject: subject,
+      text: `${subject}: ${code}. Код действует 15 минут.`,
+      html: `
+        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px; max-width: 500px; margin: 0 auto; background-color: #ffffff; color: #1a1a1a;">
+          <h2 style="color: #4F46E5; text-align: center;">${title}</h2>
+          <p>Здравствуйте!</p>
+          <p>${messageText}</p>
+          <div style="background-color: #f3f4f6; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
+            <h1 style="color: #4F46E5; font-size: 32px; letter-spacing: 10px; margin: 0; font-family: monospace;">${code}</h1>
+          </div>
+          <p style="font-size: 14px; color: #6b7280;">Код действует 15 минут.</p>
+          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
+          <p style="font-size: 12px; color: #9ca3af; text-align: center;">Если вы не запрашивали это письмо, просто проигнорируйте его.</p>
+        </div>
+      `,
+    });
+    console.log(`[SMTP] Письмо успешно отправлено на ${email}`);
+  } catch (error: any) {
+    console.error(`[SMTP ERROR] Ошибка при отправке на ${email}:`, error.message);
+    throw error;
+  }
+}
+
+async function activateUserSubscription(userId: string, plan: string, paymentId?: string, telegramId?: number) {
+  const planTier = plan === '1year' ? 'whale' : 'pro';
+  const months = plan === '1month' ? 1 : plan === '6months' ? 6 : 12;
+  const amount = PLAN_PRICES[plan] || 0;
+
+  const userResult = await query("SELECT premium_end_date FROM users WHERE id = $1", [userId]);
+  if (userResult.rows.length === 0) {
+    throw new Error(`User ${userId} not found`);
+  }
+
+  let currentExpiry = userResult.rows[0]?.premium_end_date;
+  let startDate = new Date();
+  if (currentExpiry && new Date(currentExpiry) > new Date()) {
+    startDate = new Date(currentExpiry);
+  }
+
+  const newExpiryDate = new Date(startDate);
+  newExpiryDate.setMonth(newExpiryDate.getMonth() + months);
+
+  await query(
+    "UPDATE users SET subscription_tier = $1, premium_end_date = $2, avatar_tier = $3, telegram_id = COALESCE(telegram_id, $4) WHERE id = $5",
+    [planTier, newExpiryDate, plan, telegramId || null, userId]
+  );
+
+  await query(
+    "INSERT INTO premium_purchases (user_id, plan_tier, amount, expiry_date, telegram_payment_charge_id) VALUES ($1, $2, $3, $4, $5)",
+    [userId, planTier, amount, newExpiryDate, paymentId || null]
+  );
+
+  // Affiliate Commission Logic
+  const userReferrerResult = await query("SELECT referrer_id FROM users WHERE id = $1", [userId]);
+  const referrerId = userReferrerResult.rows[0]?.referrer_id;
+    if (referrerId) {
+      const commission = amount * 0.2; // 20% commission
+      await query(
+        "INSERT INTO referrals (referrer_id, referred_user_id, status, commission_amount) VALUES ($1, $2, 'paid', $3) ON CONFLICT (referred_user_id) DO UPDATE SET status = 'paid', commission_amount = referrals.commission_amount + $3",
+        [referrerId, userId, commission]
+      );
+      // Update referrer balance and total income
+      await query(
+        "UPDATE users SET affiliate_balance = COALESCE(affiliate_balance, 0) + $1, total_affiliate_income = COALESCE(total_affiliate_income, 0) + $1, paid_referrals_pending = COALESCE(paid_referrals_pending, 0) + 1 WHERE id = $2",
+        [commission, referrerId]
+      );
+    }
+
+  return newExpiryDate;
+}
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Trust proxy for correct protocol/IP detection behind load balancers
+  app.enable('trust proxy');
 
   // Initialize DB
   try {
@@ -333,8 +466,12 @@ async function startServer() {
   });
 
   const JWT_SECRET = process.env.JWT_SECRET || "smarteye-secret-key-123";
-  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "115832245724-723777rcgh8heqtd00nhgi92q885jntk.apps.googleusercontent.com";
-  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    console.warn("WARNING: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is not set. Google Auth will not work.");
+  }
 
   app.get("/api/auth/google/url", (req, res) => {
     const redirectUri = `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
@@ -421,6 +558,229 @@ async function startServer() {
     }
   });
 
+  // Heleket Payment Routes
+  app.post("/api/payments/heleket/create", express.json(), async (req, res) => {
+    const { userId, plan, amount } = req.body;
+    const HELEKET_API_KEY = process.env.HELEKET_API_KEY;
+    const HELEKET_MERCHANT_ID = process.env.HELEKET_MERCHANT_ID || process.env.HELEKET_SHOP_ID;
+
+    if (!HELEKET_API_KEY || !HELEKET_MERCHANT_ID) {
+      console.error(`Heleket Config Error - Merchant ID: ${HELEKET_MERCHANT_ID ? 'OK' : 'MISSING'}, API Key: ${HELEKET_API_KEY ? 'OK' : 'MISSING'}`);
+      return res.status(500).json({ error: "Heleket configuration missing" });
+    }
+
+    try {
+      const payload = {
+        amount: amount.toString(),
+        currency: "USD",
+        order_id: `HELEKET_${userId}_${plan}_${Date.now()}`,
+        description: `SmartEye Subscription: ${plan}`,
+        url_return: `${req.protocol}://${req.get('host')}/profile`,
+        url_success: `${req.protocol}://${req.get('host')}/profile?payment=success`,
+        url_callback: `${req.protocol}://${req.get('host')}/api/payments/heleket/webhook`,
+      };
+
+      const jsonPayload = JSON.stringify(payload);
+      const base64Payload = Buffer.from(jsonPayload).toString("base64");
+      const sign = crypto.createHash("md5").update(base64Payload + HELEKET_API_KEY).digest("hex");
+
+      const response = await axios.post("https://api.heleket.com/v1/payment", payload, {
+        headers: {
+          merchant: HELEKET_MERCHANT_ID,
+          sign,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const url = response.data?.result?.url;
+      if (!url) {
+        console.error("Heleket response missing url:", response.data);
+        return res.status(500).json({ error: "Heleket returned no payment url" });
+      }
+
+      res.json({ url });
+    } catch (error: any) {
+      console.error("Heleket invoice creation failed:", error.response?.data || error.message);
+      res.status(500).json({ error: "Failed to create crypto invoice" });
+    }
+  });
+
+  app.post("/api/payments/heleket/webhook", express.json(), async (req, res) => {
+    try {
+      const payload = req.body;
+      const signature = req.headers['sign'] as string;
+      const HELEKET_API_KEY = process.env.HELEKET_API_KEY;
+
+      // Verify signature if possible
+      if (signature && HELEKET_API_KEY) {
+        const jsonPayload = JSON.stringify(payload);
+        const base64Payload = Buffer.from(jsonPayload).toString("base64");
+        const expectedSign = crypto.createHash("md5").update(base64Payload + HELEKET_API_KEY).digest("hex");
+        
+        if (signature !== expectedSign) {
+          console.warn("[Heleket Webhook] Invalid signature received");
+          // Depending on security requirements, you might want to return 400 here
+          // return res.status(400).send("Invalid signature");
+        }
+      }
+
+      const { order_id, status } = payload;
+      console.log(`[Heleket Webhook] Received status ${status} for order ${order_id}`);
+
+      // Heleket statuses: paid, paid_over, confirm_check, wrong_amount
+      const successfulStatuses = ['paid', 'paid_over', 'completed'];
+      if (successfulStatuses.includes(status)) {
+        const parts = order_id.split('_');
+        const userId = parts[1];
+        const plan = parts[2];
+
+        if (userId && plan) {
+          await activateUserSubscription(userId, plan, order_id);
+          console.log(`[Heleket Webhook] Subscription activated for user ${userId}, plan ${plan}`);
+        }
+      }
+      res.json({ status: "ok" });
+    } catch (error) {
+      console.error("[Heleket Webhook] Error processing webhook:", error);
+      res.status(500).json({ error: "Webhook processing failed" });
+    }
+  });
+
+  // Yookassa Payment Routes
+  app.post("/api/payments/yookassa/create", express.json(), async (req, res) => {
+    const { userId, plan, amount } = req.body;
+    const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID;
+    const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY;
+
+    if (!YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY) {
+      return res.status(500).json({ error: "Yookassa configuration missing" });
+    }
+
+    try {
+      const planLabel = PLAN_LABELS[plan] || plan;
+      
+      // Use predefined RUB prices from global PLAN_PRICES or fall back to calculation
+      const rubAmount = PLAN_PRICES[plan] || (amount * 88); 
+
+      const response = await axios.post("https://api.yookassa.ru/v3/payments", {
+        amount: {
+          value: rubAmount.toFixed(2),
+          currency: "RUB"
+        },
+        confirmation: {
+          type: "redirect",
+          return_url: `${req.protocol}://${req.get('host')}/profile?payment=success`
+        },
+        capture: true,
+        description: `SmartEye Subscription: ${planLabel}`,
+        metadata: {
+          userId,
+          plan
+        }
+      }, {
+        auth: {
+          username: YOOKASSA_SHOP_ID,
+          password: YOOKASSA_SECRET_KEY
+        },
+        headers: {
+          'Idempotence-Key': crypto.randomUUID(),
+          'Content-Type': 'application/json'
+        }
+      });
+
+      res.json({ url: response.data.confirmation?.confirmation_url });
+    } catch (error: any) {
+      console.error("Yookassa payment creation failed:", error.response?.data || error.message);
+      res.status(500).json({ error: "Failed to create card payment" });
+    }
+  });
+
+  app.post("/api/payments/yookassa/webhook", express.json(), async (req, res) => {
+    try {
+      const event = req.body;
+      console.log(`[Yookassa Webhook] Received event: ${event.event}`);
+
+      if (event.event === 'payment.succeeded') {
+        const payment = event.object;
+        const { userId, plan } = payment.metadata;
+        const paymentId = payment.id;
+
+        if (userId && plan) {
+          await activateUserSubscription(userId, plan, `YOOKASSA_${paymentId}`);
+          console.log(`[Yookassa Webhook] Subscription activated for user ${userId}, plan ${plan}`);
+        }
+      }
+      res.status(200).send('OK');
+    } catch (error) {
+      console.error("[Yookassa Webhook] Error processing webhook:", error);
+      res.status(500).json({ error: "Webhook processing failed" });
+    }
+  });
+
+  // Cryptomus Payment Routes
+  app.post("/api/payments/cryptomus/create", express.json(), async (req, res) => {
+    const { userId, plan, amount } = req.body;
+    const CRYPTOMUS_API_KEY = process.env.CRYPTOMUS_API_KEY;
+    const CRYPTOMUS_MERCHANT_ID = process.env.CRYPTOMUS_MERCHANT_ID;
+
+    if (!CRYPTOMUS_API_KEY || !CRYPTOMUS_MERCHANT_ID) {
+      return res.status(500).json({ error: "Cryptomus configuration missing" });
+    }
+
+    try {
+      const payload = {
+        amount: amount.toString(),
+        currency: "USD",
+        order_id: `CRYPTOMUS_${userId}_${plan}_${Date.now()}`,
+        url_return: `${req.protocol}://${req.get('host')}/profile?payment=success`,
+        url_callback: `${req.protocol}://${req.get('host')}/api/payments/cryptomus/webhook`,
+        is_test: false // Change to true if testing
+      };
+
+      const jsonPayload = JSON.stringify(payload);
+      const base64Payload = Buffer.from(jsonPayload).toString('base64');
+      const sign = crypto.createHash('md5').update(base64Payload + CRYPTOMUS_API_KEY).digest('hex');
+
+      const response = await axios.post("https://api.cryptomus.com/v1/payment", payload, {
+        headers: {
+          'merchant': CRYPTOMUS_MERCHANT_ID,
+          'sign': sign,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      res.json({ url: response.data.result?.url });
+    } catch (error: any) {
+      console.error("Cryptomus payment creation failed:", error.response?.data || error.message);
+      res.status(500).json({ error: "Failed to create crypto invoice" });
+    }
+  });
+
+  app.post("/api/payments/cryptomus/webhook", express.json(), async (req, res) => {
+    try {
+      const payload = req.body;
+      const { order_id, status } = payload;
+      
+      console.log(`[Cryptomus Webhook] Received status ${status} for order ${order_id}`);
+
+      // Cryptomus statuses: paid, paid_over, wrong_amount_paid
+      if (status === 'paid' || status === 'paid_over') {
+        const parts = order_id.split('_');
+        const userId = parts[1];
+        const plan = parts[2];
+
+        if (userId && plan) {
+          await activateUserSubscription(userId, plan, order_id);
+          console.log(`[Cryptomus Webhook] Subscription activated for user ${userId}, plan ${plan}`);
+        }
+      }
+      res.json({ status: "ok" });
+    } catch (error) {
+      console.error("[Cryptomus Webhook] Error processing webhook:", error);
+      res.status(500).json({ error: "Webhook processing failed" });
+    }
+  });
+
   app.post("/api/auth/register", express.json(), async (req, res) => {
     const { email, password, username, referrerId } = req.body;
     try {
@@ -429,11 +789,14 @@ async function startServer() {
         return res.status(400).json({ error: "User already exists" });
       }
 
+      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expires = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
       // WARNING: Storing passwords in plain text is highly insecure.
       // This was implemented per user request.
       const result = await query(
-        "INSERT INTO users (email, password, username, referrer_id) VALUES ($1, $2, $3, $4) RETURNING id, email, username, subscription_tier, avatar_tier, premium_end_date, balance, role, referrer_id, created_at",
-        [email, password, username || email.split("@")[0], referrerId || null]
+        "INSERT INTO users (email, password, username, referrer_id, verification_code, verification_code_expires, is_verified) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, email, username, subscription_tier, avatar_tier, premium_end_date, balance, role, referrer_id, created_at, is_verified",
+        [email, password, username || email.split("@")[0], referrerId || null, verificationCode, expires, false]
       );
 
       const user = result.rows[0];
@@ -450,23 +813,142 @@ async function startServer() {
         }
       }
 
-      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
-      res.json({ user, token });
+      try {
+        await sendVerificationEmail(email, verificationCode);
+        res.json({ message: "Verification code sent", email: user.email });
+      } catch (err: any) {
+        console.error("Failed to send verification email:", err);
+        res.status(500).json({ 
+          error: "Пользователь создан, но не удалось отправить письмо. Проверьте настройки SMTP в настройках приложения или попробуйте позже.", 
+          email: user.email,
+          emailError: err.message 
+        });
+      }
     } catch (error) {
       console.error("Registration error:", error);
       res.status(500).json({ error: "Registration failed" });
     }
   });
 
+  app.post("/api/auth/verify", express.json(), async (req, res) => {
+    const { email, code } = req.body;
+    try {
+      const result = await query(
+        "SELECT * FROM users WHERE email = $1 AND verification_code = $2 AND verification_code_expires > NOW()",
+        [email, code]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(400).json({ error: "Invalid or expired verification code" });
+      }
+
+      const user = result.rows[0];
+      await query(
+        "UPDATE users SET is_verified = true, verification_code = NULL, verification_code_expires = NULL WHERE id = $1",
+        [user.id]
+      );
+
+      const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
+      
+      // Fetch updated user
+      const updatedUserRes = await query("SELECT id, email, username, subscription_tier, avatar_tier, premium_end_date, balance, role, referrer_id, created_at, is_verified FROM users WHERE id = $1", [user.id]);
+      
+      res.json({ user: updatedUserRes.rows[0], token });
+    } catch (error) {
+      console.error("Verification error:", error);
+      res.status(500).json({ error: "Verification failed" });
+    }
+  });
+
+  app.post("/api/auth/resend-code", express.json(), async (req, res) => {
+    const { email } = req.body;
+    try {
+      const result = await query("SELECT * FROM users WHERE email = $1", [email]);
+      if (result.rows.length === 0) return res.status(404).json({ error: "User not found" });
+
+      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expires = new Date(Date.now() + 15 * 60 * 1000);
+
+      await query(
+        "UPDATE users SET verification_code = $1, verification_code_expires = $2 WHERE email = $3",
+        [verificationCode, expires, email]
+      );
+
+      try {
+        await sendVerificationEmail(email, verificationCode);
+        res.json({ message: "Code reshaped" });
+      } catch (err: any) {
+        res.status(500).json({ error: "Не удалось отправить код. Ошибка: " + err.message });
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Failed to resend code" });
+    }
+  });
+
+  app.post("/api/auth/reset-password-request", express.json(), async (req, res) => {
+    const { email } = req.body;
+    try {
+      // Case-insensitive lookup
+      const result = await query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [email]);
+      if (result.rows.length === 0) {
+        // Return success even if email not found to prevent user enumeration
+        return res.json({ message: "If the email was found, a reset code has been sent." });
+      }
+
+      const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expires = new Date(Date.now() + 15 * 60 * 1000);
+
+      await query(
+        "UPDATE users SET verification_code = $1, verification_code_expires = $2 WHERE LOWER(email) = LOWER($3)",
+        [resetCode, expires, email]
+      );
+
+      try {
+        await sendVerificationEmail(email, resetCode, 'reset');
+        res.json({ message: "Reset code sent" });
+      } catch (err: any) {
+        res.status(500).json({ error: "Failed to send reset email: " + err.message });
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Password reset request failed" });
+    }
+  });
+
+  app.post("/api/auth/reset-password-confirm", express.json(), async (req, res) => {
+    const { email, code, newPassword } = req.body;
+    try {
+      const result = await query(
+        "SELECT * FROM users WHERE LOWER(email) = LOWER($1) AND verification_code = $2 AND verification_code_expires > NOW()",
+        [email, code]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(400).json({ error: "Invalid or expired reset code" });
+      }
+
+      const user = result.rows[0];
+      await query(
+        "UPDATE users SET password = $1, verification_code = NULL, verification_code_expires = NULL, is_verified = true WHERE id = $2",
+        [newPassword, user.id]
+      );
+
+      res.json({ message: "Password updated successfully" });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update password" });
+    }
+  });
+
   app.post("/api/auth/login", express.json(), async (req, res) => {
     const { email, password } = req.body;
     try {
-      const result = await query("SELECT * FROM users WHERE email = $1", [email]);
+      // Case-insensitive email lookup
+      const result = await query("SELECT * FROM users WHERE LOWER(email) = LOWER($1)", [email]);
       if (result.rows.length === 0) {
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
       const user = result.rows[0];
+
       if (!user.password) {
         return res.status(401).json({ error: "Invalid email or password" });
       }
@@ -477,9 +959,15 @@ async function startServer() {
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
+      // If user logs in but wasn't verified, mark as verified
+      if (!user.is_verified) {
+        await query("UPDATE users SET is_verified = true WHERE id = $1", [user.id]);
+        user.is_verified = true;
+      }
+
       const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
-      const { password: _p, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword, token });
+      const { password: _p, verification_code: _v, verification_code_expires: _ve, ...userWithoutSensitive } = user;
+      res.json({ user: userWithoutSensitive, token });
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ error: "Login failed" });
@@ -522,8 +1010,10 @@ async function startServer() {
 
   app.get("/api/partner/referrals/:userId", async (req, res) => {
     const { userId } = req.params;
+    console.log(`[Partner] Incoming referrals request for: ${userId}`);
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(userId)) {
+      console.warn(`[Partner] userId ${userId} is not a valid UUID`);
       return res.status(400).json({ error: "Invalid user ID format" });
     }
     try {
@@ -535,6 +1025,7 @@ async function startServer() {
          ORDER BY r.created_at DESC`,
         [userId]
       );
+      console.log(`[Partner] Found ${result.rows.length} referrals for ${userId}`);
       res.json(result.rows);
     } catch (error) {
       console.error("Error fetching referrals:", error);
@@ -542,34 +1033,111 @@ async function startServer() {
     }
   });
 
+  app.post("/api/partner/click/:partnerId", async (req, res) => {
+    const { partnerId } = req.params;
+    console.log(`[Partner] Click received for partnerId: ${partnerId}`);
+
+    if (!partnerId || !isUUID(partnerId)) {
+      console.warn(`[Partner] Invalid partner ID format: ${partnerId}`);
+      return res.status(400).json({ error: "Invalid partner ID" });
+    }
+    try {
+      // Check if user exists
+      const userResult = await query("SELECT id FROM users WHERE id = $1", [partnerId]);
+      if (userResult.rows.length === 0) {
+        console.warn(`[Partner] Partner not found in DB: ${partnerId}`);
+        return res.status(404).json({ error: "Partner not found" });
+      }
+
+      // Upsert click count in affiliate_stats
+      const result = await query(
+        "INSERT INTO affiliate_stats (user_id, clicks) VALUES ($1, 1) ON CONFLICT (user_id) DO UPDATE SET clicks = affiliate_stats.clicks + 1, updated_at = CURRENT_TIMESTAMP RETURNING clicks",
+        [partnerId]
+      );
+      
+      console.log(`[Partner] Click recorded! New total: ${result.rows[0].clicks} for ${partnerId}`);
+      res.json({ success: true, clicks: result.rows[0].clicks });
+    } catch (error) {
+      console.error("[Partner] Click tracking error:", error);
+      res.status(500).json({ error: "Failed to track click" });
+    }
+  });
+
   app.get("/api/partner/earnings-summary/:userId", async (req, res) => {
     const { userId } = req.params;
+    console.log(`[Partner] Incoming earnings summary request for: ${userId}`);
     try {
       let totalEarnings = 0;
       let totalWithdrawn = 0;
+      let totalClicks = 0;
+      let lastWithdrawDate = null;
+      let totalSystemIncome = 0;
+      
+      let userExt = null;
       
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (uuidRegex.test(userId)) {
+        // Check if user is admin
+        const userResult = await query("SELECT role, created_at FROM users WHERE id = $1", [userId]);
+        const isAdmin = userResult.rows[0]?.role === 'admin';
+        
         const earningsResult = await query(
           "SELECT SUM(commission_amount) as total_earnings FROM referrals WHERE referrer_id = $1",
           [userId]
         );
         const withdrawalsResult = await query(
-          "SELECT SUM(amount) as total_withdrawn FROM withdrawals WHERE user_id = $1 AND status != 'rejected'",
+          "SELECT SUM(amount) as total_withdrawn, MAX(created_at) as last_withdraw_date FROM withdrawals WHERE user_id = $1 AND status != 'rejected'",
+          [userId]
+        );
+        const statsResult = await query(
+          "SELECT clicks FROM affiliate_stats WHERE user_id = $1",
           [userId]
         );
         
         totalEarnings = parseFloat(earningsResult.rows[0].total_earnings || 0);
         totalWithdrawn = parseFloat(withdrawalsResult.rows[0].total_withdrawn || 0);
+        totalClicks = parseInt(statsResult.rows[0]?.clicks || 0);
+        lastWithdrawDate = withdrawalsResult.rows[0]?.last_withdraw_date;
+
+        console.log(`[Partner] Data for ${userId}: Earnings=${totalEarnings}, Clicks=${totalClicks}`);
+
+        if (!lastWithdrawDate) {
+          lastWithdrawDate = userResult.rows[0]?.created_at;
+        }
+
+        // If admin, calculate total system revenue
+        if (isAdmin) {
+          const systemRevenueResult = await query("SELECT SUM(amount) as total FROM premium_purchases");
+          totalSystemIncome = parseFloat(systemRevenueResult.rows[0].total || 0);
+        }
+
+        // Get stored values from users table for partnership
+        const userExtendedResult = await query(
+          "SELECT affiliate_balance, total_affiliate_income, paid_referrals_pending FROM users WHERE id = $1",
+          [userId]
+        );
+        userExt = userExtendedResult.rows[0];
+        
+        // We can use calculated values or stored values. Let's use stored values for balance if available
+        // to match what the user Sees in the "wallet".
+        if (userExt) {
+          // totalEarnings = parseFloat(userExt.total_affiliate_income || totalEarnings);
+          // availableBalance = parseFloat(userExt.affiliate_balance || (totalEarnings - totalWithdrawn));
+        }
+
+      } else {
+        console.warn(`[Partner] userId ${userId} is not a valid UUID in summary`);
       }
       
-      const welcomeBonus = 25.0; // Welcome bonus for all users
       const response = { 
-        total_earnings: Math.max(totalEarnings + welcomeBonus, 25.0),
+        total_earnings: userExt ? parseFloat(userExt.total_affiliate_income || totalEarnings) : totalEarnings,
         total_withdrawn: totalWithdrawn,
-        available_balance: Math.max((totalEarnings + welcomeBonus) - totalWithdrawn, 25.0)
+        available_balance: userExt ? parseFloat(userExt.affiliate_balance || (totalEarnings - totalWithdrawn)) : (totalEarnings - totalWithdrawn),
+        paid_referrals_pending: userExt ? parseInt(userExt.paid_referrals_pending || 0) : 0,
+        total_clicks: totalClicks,
+        last_withdraw_date: lastWithdrawDate,
+        total_system_income: totalSystemIncome
       };
-      console.log(`Earnings summary for user ${userId}:`, response);
       res.json(response);
     } catch (error) {
       console.error("Error fetching earnings summary:", error);
@@ -589,7 +1157,7 @@ async function startServer() {
       );
       
       // Update user subscription
-      const avatarTier = months === 1 ? '1month' : months === 3 ? '3months' : months === 12 ? '1year' : 'free';
+      const avatarTier = months === 1 ? '1month' : months === 6 ? '6months' : months === 12 ? '1year' : 'free';
       await query(
         "UPDATE users SET subscription_tier = $1, premium_end_date = $2, avatar_tier = $3 WHERE id = $4",
         [planTier, expiryDate.toISOString(), avatarTier, userId]
@@ -604,6 +1172,12 @@ async function startServer() {
           "UPDATE referrals SET status = 'paid', commission_amount = commission_amount + $1 WHERE referred_user_id = $2",
           [commission, userId]
         );
+        
+        // Update referrer balance and total income
+        await query(
+          "UPDATE users SET affiliate_balance = COALESCE(affiliate_balance, 0) + $1, total_affiliate_income = COALESCE(total_affiliate_income, 0) + $1, paid_referrals_pending = COALESCE(paid_referrals_pending, 0) + 1 WHERE id = $2",
+          [commission, referrerId]
+        );
       }
 
       res.json(result.rows[0]);
@@ -616,10 +1190,22 @@ async function startServer() {
   app.post("/api/partner/withdraw", express.json(), async (req, res) => {
     const { userId, amount, address } = req.body;
     try {
+      // Check balance
+      const userRes = await query("SELECT affiliate_balance FROM users WHERE id = $1", [userId]);
+      const currentBalance = parseFloat(userRes.rows[0]?.affiliate_balance || 0);
+      
+      if (currentBalance < amount) {
+        return res.status(400).json({ error: "Insufficient balance" });
+      }
+
       const result = await query(
         "INSERT INTO withdrawals (user_id, amount, address) VALUES ($1, $2, $3) RETURNING *",
         [userId, amount, address]
       );
+      
+      // Deduct from balance and reset pending referrals
+      await query("UPDATE users SET affiliate_balance = affiliate_balance - $1, paid_referrals_pending = 0 WHERE id = $2", [amount, userId]);
+
       res.json(result.rows[0]);
     } catch (error) {
       console.error("Withdrawal error:", error);
@@ -646,37 +1232,43 @@ async function startServer() {
         console.warn("Failed to update user support_message column:", e);
       }
 
-      // Notify via WebSocket if possible
+      // Notify via densitiesWss if possible
       const targetMessage = result.rows[0];
-      wss.clients.forEach((client: any) => {
-        if (client.readyState === 1 && client.userId === userId) {
+      let broadcastCount = 0;
+      densitiesWss.clients.forEach((client: any) => {
+        if (client.readyState === 1 && String(client.userId) === String(userId)) {
           client.send(JSON.stringify({
             type: "SUPPORT_MESSAGE_RECEIVED",
             message: targetMessage
           }));
+          broadcastCount++;
         }
       });
+      console.log(`[Support] Broadcasted message to ${broadcastCount} client(s) for user ${userId}`);
 
-      // Auto-reply for demo
-      setTimeout(async () => {
-        try {
-          const autoReplyResult = await query(
-            "INSERT INTO support_messages (user_id, message, sender_type, sender_role) VALUES ($1, $2, $3, $3) RETURNING *",
-            [userId, "Здравствуйте! Мы получили ваше сообщение и ответим в ближайшее время. Спасибо за обращение!", "admin"]
-          );
-          const replyMessage = autoReplyResult.rows[0];
-          wss.clients.forEach((client: any) => {
-            if (client.readyState === 1 && client.userId === userId) {
-              client.send(JSON.stringify({
-                type: "SUPPORT_MESSAGE_RECEIVED",
-                message: replyMessage
-              }));
-            }
-          });
-        } catch (e) {
-          console.error("Auto-reply error:", e);
-        }
-      }, 2000);
+      // Auto-reply ONLY for the very first message from user
+      const messageCount = await query("SELECT COUNT(*) FROM support_messages WHERE user_id = $1", [userId]);
+      if (parseInt(messageCount.rows[0].count) <= 1) {
+        setTimeout(async () => {
+          try {
+            const autoReplyResult = await query(
+              "INSERT INTO support_messages (user_id, message, sender_type, sender_role) VALUES ($1, $2, $3, $3) RETURNING *",
+              [userId, "Здравствуйте! Мы получили ваше сообщение и ответим в ближайшее время. Спасибо за обращение!", "admin"]
+            );
+            const replyMessage = autoReplyResult.rows[0];
+            densitiesWss.clients.forEach((client: any) => {
+              if (client.readyState === 1 && String(client.userId) === String(userId)) {
+                client.send(JSON.stringify({
+                  type: "SUPPORT_MESSAGE_RECEIVED",
+                  message: replyMessage
+                }));
+              }
+            });
+          } catch (e) {
+            console.error("Auto-reply error:", e);
+          }
+        }, 2000);
+      }
 
       res.json(targetMessage);
     } catch (error) {
@@ -828,14 +1420,17 @@ async function startServer() {
       const targetMessage = result.rows[0];
 
       // WebSocket broadcast (For REAL-TIME delivery)
-      wss.clients.forEach((client: any) => {
-        if (client.readyState === 1 && client.userId === userId) {
+      let broadcastCount = 0;
+      densitiesWss.clients.forEach((client: any) => {
+        if (client.readyState === 1 && String(client.userId) === String(userId)) {
           client.send(JSON.stringify({
             type: "SUPPORT_MESSAGE_RECEIVED",
             message: targetMessage
           }));
+          broadcastCount++;
         }
       });
+      console.log(`[Support Admin] Broadcasted to ${broadcastCount} client(s) for user ${userId}`);
 
       res.json(targetMessage);
     } catch (error) {
@@ -1095,6 +1690,90 @@ async function startServer() {
     }
   });
 
+  // Proxy routes for tickers to bypass regional blocks (451)
+  app.get("/api/tickers/binance/spot", async (req, res) => {
+    try {
+      const response = await axios.get('https://api.binance.com/api/v3/ticker/24hr');
+      res.json(response.data);
+    } catch (error: any) {
+      // Fallback for 451 or other errors
+      try {
+        const altResponse = await axios.get('https://api.binance.me/api/v3/ticker/24hr');
+        res.json(altResponse.data);
+      } catch (e) {
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  });
+
+  app.get("/api/tickers/binance/futures", async (req, res) => {
+    try {
+      const response = await axios.get('https://fapi.binance.com/fapi/v1/ticker/24hr');
+      res.json(response.data);
+    } catch (error: any) {
+      try {
+        const altResponse = await axios.get('https://fapi.binance.me/fapi/v1/ticker/24hr');
+        res.json(altResponse.data);
+      } catch (e) {
+        res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+  });
+
+  app.get("/api/tickers/bybit/:category", async (req, res) => {
+    const { category } = req.params; // 'spot' or 'linear'
+    try {
+      const response = await axios.get(`https://api.bybit.com/v5/market/tickers?category=${category}`);
+      res.json(response.data);
+    } catch (error: any) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Proxy route for individual ticker
+  app.get("/api/ticker/binance/:symbol", async (req, res) => {
+    const { symbol } = req.params;
+    const marketType = req.query.market === 'FUTURES' ? 'FUTURES' : 'SPOT';
+    const baseUrl = marketType === 'SPOT' ? 'https://api.binance.com/api/v3/ticker/24hr' : 'https://fapi.binance.com/fapi/v1/ticker/24hr';
+    try {
+      const response = await axios.get(`${baseUrl}?symbol=${symbol}`);
+      res.json(response.data);
+    } catch (error: any) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Proxy route for klines
+  app.get("/api/klines/:exchange/:market", async (req, res) => {
+    const { exchange, market } = req.params;
+    try {
+      if (exchange === 'binance') {
+        const baseUrl = market === 'spot' ? 'https://api.binance.com/api/v3/klines' : 'https://fapi.binance.com/fapi/v1/klines';
+        const response = await axios.get(baseUrl, { params: req.query });
+        res.json(response.data);
+      } else {
+        const category = market === 'spot' ? 'spot' : 'linear';
+        const params: any = { ...req.query };
+        if (!params.category) {
+          params.category = category;
+        }
+        const intervalMap: Record<string, string> = {
+          '1m': '1', '3m': '3', '5m': '5', '15m': '15', '30m': '30',
+          '1h': '60', '2h': '120', '4h': '240', '6h': '360', '12h': '720',
+          '1d': 'D', '1w': 'W'
+        };
+        if (params.interval && intervalMap[params.interval]) {
+          params.interval = intervalMap[params.interval];
+        }
+        const response = await axios.get(`https://api.bybit.com/v5/market/kline`, { params });
+        res.json(response.data);
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Admin Routes
   // Admin Routes
   app.get("/api/admin/users", async (req, res) => {
     // In a real app, you'd check a JWT token for admin role here
@@ -1103,6 +1782,174 @@ async function startServer() {
       res.json(result.rows);
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // AI ROUTES
+  let aiInstance: GoogleGenAI | null = null;
+  const getAI = () => {
+    if (!aiInstance) {
+      const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY;
+      if (!apiKey) return null;
+      aiInstance = new GoogleGenAI({ 
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          }
+        }
+      });
+    }
+    return aiInstance;
+  };
+
+  const handleAiError = (error: any, res: express.Response) => {
+    console.error("AI Error:", error);
+    const errorMessage = error.message || String(error);
+    const isQuotaError = errorMessage.includes('429') || 
+                        errorMessage.includes('RESOURCE_EXHAUSTED') || 
+                        (error.status === 429);
+    
+    if (isQuotaError) {
+      return res.status(429).json({ 
+        error: "QUOTA_EXCEEDED", 
+        message: "AI quota exceeded. Please try again in a few minutes." 
+      });
+    }
+    res.status(500).json({ error: "AI_ERROR", message: errorMessage });
+  };
+
+  app.post("/api/ai/analyze", express.json(), async (req, res) => {
+    const { asset, language = 'ru', model = 'gemini-3-flash-preview' } = req.body;
+    const ticker = asset.pair.replace(/USDT$|BUSD$|BTC$|ETH$/, '');
+    
+    const prompt = `
+      TARGET ASSET: ${asset.pair} (Ticker: ${ticker}).
+      
+      STEP 1: Use Google Search to find two specific pages on CoinMarketCap for ${ticker}:
+      1. Main Page: https://coinmarketcap.com/currencies/[coin-slug]/
+      2. AI Page: https://coinmarketcap.com/cmc-ai/[coin-slug]/what-is/
+      
+      STEP 2: EXTRACT "In brief" (Source 1):
+      - Find the general summary section on the main page.
+      - Extract key bullet points about the project.
+      
+      STEP 3: EXTRACT "Key Factors" (Source 2 from CMC AI):
+      - Find the blue-tinted block with lightning bolt icon specifically from the CMC AI section.
+      - Extract the numbered "Key Factors" points verbatim.
+      
+      STEP 4: EXTRACT ALL MARKET METRICS from the page:
+      - Current Price, Market Cap, 24h Volume, Circulating Supply, Market Rank, ATH, ATL.
+      
+      STEP 5: TRANSLATE everything to ${language === 'ru' ? 'Russian' : 'English'}.
+      
+      OUTPUT JSON:
+      {
+        "analysis": "Extraction from CoinMarketCap and CMC AI completed.",
+        "brief": ["<Source 1 point 1>", "<Source 1 point 2>", "..."],
+        "why": ["<Source 2 (CMC AI) point 1>", "<Source 2 (CMC AI) point 2>", "..."],
+        "metrics": {
+          "price": "<Verbatim Price>",
+          "cap": "<Verbatim Market Cap>",
+          "volume": "<Verbatim 24h Volume>",
+          "supply": "<Verbatim Circulating Supply>",
+          "rank": "<Market Rank>",
+          "ath": "<All Time High>",
+          "atl": "<All Time Low>",
+          "news": "<Combined important highlights string>",
+          "protocol": "<Detailed 'What is' section>",
+          "protocolTitle": "О протоколе ${ticker}"
+        },
+        "sources": [
+          {"title": "CoinMarketCap ${ticker}", "uri": "https://coinmarketcap.com/currencies/${ticker.toLowerCase()}/"},
+          {"title": "CMC AI Insights", "uri": "https://coinmarketcap.com/cmc-ai/${ticker.toLowerCase()}/what-is/"}
+        ]
+      }
+    `;
+
+    try {
+      const ai = getAI();
+      if (!ai) return res.status(503).json({ error: "AI_UNAVAILABLE", message: "AI Service unavailable: apiKey is missing." });
+
+      // Use recommended models for this environment
+      const targetModel = 'gemini-3-flash-preview';
+
+      const response = await ai.models.generateContent({
+        model: targetModel,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          systemInstruction: `You are a high-precision data extraction tool for Smarteye.
+          
+          You MUST provide two separate arrays of information:
+          1. "brief": General bullet points from the main CoinMarketCap page.
+          2. "why": The specific "Key Factors" from the blue CMC AI block (lightning bolt).
+          
+          CRITICAL RULES:
+          1. DO NOT merge these two sources.
+          2. EXTRACT VERBATIM where possible.
+          3. Fill the "metrics" object with all requested numbers.
+          4. Always translate the final output to ${language === 'ru' ? 'Russian' : 'English'}.`,
+          tools: [{ googleSearch: {} }],
+        },
+      });
+
+      const data = JSON.parse(response.text || "{}");
+      
+      const groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
+        ?.filter(chunk => chunk.web)
+        ?.map(chunk => ({
+          title: chunk.web?.title || 'Source',
+          uri: chunk.web?.uri || ''
+        })) || [];
+
+      const result = {
+        analysis: data.analysis || "Extraction from CoinMarketCap completed.",
+        why: Array.isArray(data.why) ? data.why : [],
+        brief: Array.isArray(data.brief) ? data.brief : [],
+        metrics: {
+          price: data.metrics?.price || '',
+          cap: data.metrics?.cap || '',
+          volume: data.metrics?.volume || '',
+          supply: data.metrics?.supply || '',
+          rank: data.metrics?.rank || '',
+          ath: data.metrics?.ath || '',
+          atl: data.metrics?.atl || '',
+          news: data.metrics?.news || '',
+          protocol: data.metrics?.protocol || '',
+          protocolTitle: data.metrics?.protocolTitle || `О протоколе ${ticker}`
+        },
+        sources: [...(data.sources || []), ...groundingSources].slice(0, 5)
+      };
+
+      res.json(result);
+    } catch (error) {
+      handleAiError(error, res);
+    }
+  });
+
+  app.post("/api/ai/ask", express.json(), async (req, res) => {
+    const { question, context, language = 'ru' } = req.body;
+    const contextStr = Array.isArray(context) 
+      ? context.slice(0, 5).map((d: any) => `${d.pair} ${d.side} @ ${d.price}`).join(', ')
+      : '';
+    const prompt = `Context: ${contextStr}\nQuestion: ${question}\nLanguage: ${language === 'ru' ? 'Russian' : 'English'}.`;
+
+    try {
+      const ai = getAI();
+      if (!ai) return res.status(503).json({ error: "AI_UNAVAILABLE", message: "Assistant unavailable: apiKey is missing." });
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          systemInstruction: `You are Smarteye Assistant. Answer based on provided data. Respond in ${language === 'ru' ? 'Russian' : 'English'}.`
+        }
+      });
+      res.json({ text: response.text || "I'm sorry, I couldn't generate an answer." });
+    } catch (error) {
+      handleAiError(error, res);
     }
   });
 
@@ -1116,6 +1963,50 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  // Periodically fetch rank mapping to keep the engine ratings accurate
+  let rankMap: Record<string, number> = {
+    'BTC': 1, 'ETH': 2, 'SOL': 3, 'BNB': 4, 'XRP': 5, 'ADA': 6, 'DOGE': 7, 'TRX': 8, 'TON': 9, 'LINK': 10,
+    'AVAX': 11, 'SHIB': 12, 'BCH': 13, 'DOT': 14, 'NEAR': 15, 'MATIC': 16, 'LTC': 17, 'PEPE': 18, 'ICP': 19, 'KAS': 20,
+    'STX': 21, 'UNI': 22, 'RENDER': 23, 'APT': 24, 'RNDR': 23, 'ARB': 25, 'OP': 26, 'SUI': 27, 'FIL': 28, 'ETC': 29, 'HBAR': 30,
+    'KASPA': 20, 'FET': 31, 'TIA': 32, 'INJ': 33, 'TAO': 34, 'LDO': 35, 'RUNE': 36, 'JUP': 37, 'BGB': 38, 'MNT': 39, 'PYTH': 40
+  };
+
+  const fetchRanks = async () => {
+    try {
+      const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false');
+      if (response.status === 200) {
+        const data = response.data;
+        const mapping: Record<string, number> = {};
+        data.forEach((coin: any) => {
+          mapping[coin.symbol.toUpperCase()] = coin.market_cap_rank;
+        });
+        rankMap = { ...rankMap, ...mapping };
+        console.log('[Server Engine] Rank mapping updated successfully');
+      }
+    } catch (error: any) {
+      console.error('[Server Engine] Error fetching ranks from CoinGecko:', error.message);
+      // Fallback is already initialized
+    }
+  };
+  fetchRanks();
+  setInterval(fetchRanks, 60 * 60 * 1000); // Once per hour
+
+  // API Route for ranks
+  app.get("/api/ranks", (req, res) => {
+    res.json(rankMap || {});
+  });
+
+  // API Route for Fear and Greed Index
+  app.get("/api/stats/fng", async (req, res) => {
+    try {
+      const response = await axios.get('https://api.alternative.me/fng/');
+      res.json(response.data);
+    } catch (error) {
+      console.error("[Server] Error fetching FnG:", error);
+      res.status(500).json({ error: "Failed to fetch Fear and Greed Index" });
     }
   });
 
@@ -1140,7 +2031,26 @@ async function startServer() {
   }
 
   const httpServer = http.createServer(app);
-  const wss = new WebSocketServer({ server: httpServer });
+  
+  // Separate WebSocket Servers
+  const densitiesWss = new WebSocketServer({ noServer: true });
+  const chartsWss = new WebSocketServer({ noServer: true });
+
+  httpServer.on('upgrade', (request, socket, head) => {
+    const pathname = url.parse(request.url || '').pathname;
+
+    if (pathname === '/ws/densities') {
+      densitiesWss.handleUpgrade(request, socket, head, (ws: any) => {
+        densitiesWss.emit('connection', ws, request);
+      });
+    } else if (pathname === '/ws/charts') {
+      chartsWss.handleUpgrade(request, socket, head, (ws: any) => {
+        chartsWss.emit('connection', ws, request);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
 
   // Global pool for exchange connections
   const globalExchangeSockets = new Map<string, WebSocket>();
@@ -1160,15 +2070,15 @@ async function startServer() {
   // Initialize Global Server Engine
   const serverEngine = new ServerSmarteyeEngine();
 
-  // Periodically broadcast engine results to all connected clients
+  // Periodically broadcast engine results to /ws/densities clients
   setInterval(() => {
-    if (wss.clients.size > 0) {
+    if (densitiesWss.clients.size > 0) {
       const payload = JSON.stringify({
         type: "ENGINE_UPDATE",
         longs: serverEngine.longs,
         shorts: serverEngine.shorts
       });
-      wss.clients.forEach(client => {
+      densitiesWss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(payload);
         }
@@ -1189,29 +2099,16 @@ async function startServer() {
     getExchangeSocket(cfg);
   });
 
-  // Periodically fetch rank mapping to keep the engine ratings accurate
-  const fetchRanks = async () => {
-    try {
-      const response = await axios.get('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=1&sparkline=false');
-      if (response.status === 200) {
-        const data = response.data;
-        // In the future we might want to pass this to a setRankMap method on serverEngine
-        // For now, it primarily helps with UI sorting/filtering if we had that on server.
-      }
-    } catch (error: any) {
-      console.error('[Server Engine] Error fetching ranks:', error.message);
-    }
-  };
-  fetchRanks();
-  setInterval(fetchRanks, 60 * 60 * 1000); // Once per hour
-
   const BINANCE_SPOT_ALTS = [
     'wss://stream.binance.com:9443/ws',
     'wss://data-stream.binance.com/ws',
     'wss://stream.binance.com:443/ws',
     'wss://stream1.binance.com:9443/ws',
     'wss://stream2.binance.com:9443/ws',
-    'wss://stream3.binance.com:9443/ws'
+    'wss://stream3.binance.com:9443/ws',
+    'wss://stream.binance.me/ws',
+    'wss://stream.binance.me:9443/ws',
+    'wss://stream.binance.us:9443/ws'
   ];
   const BINANCE_FUTURES_ALTS = [
     'wss://fstream.binance.com/ws',
@@ -1219,7 +2116,9 @@ async function startServer() {
     'wss://fstream-auth.binance.com/ws',
     'wss://fstream1.binance.com/ws',
     'wss://fstream2.binance.com/ws',
-    'wss://fstream3.binance.com/ws'
+    'wss://fstream3.binance.com/ws',
+    'wss://fstream.binance.me/ws',
+    'wss://fstream.binance.me:443/ws'
   ];
 
   function getNextBinanceUrl(currentUrl: string, marketType: MarketType): string | null {
@@ -1303,7 +2202,7 @@ async function startServer() {
     if (!tickers || tickers.length === 0) return;
     const subMsg = {
       method: "SUBSCRIBE",
-      params: tickers.map(t => `${t.symbol.toLowerCase()}@ticker`),
+      params: tickers.map(t => `${t.symbol.toLowerCase()}@aggTrade`),
       id: Date.now()
     };
     if (ws.readyState === WebSocket.OPEN) {
@@ -1346,12 +2245,13 @@ async function startServer() {
     // Watchdog for this specific exchange connection
     const exchangeWatchdog = setInterval(() => {
       const lastMsg = lastExchangeMsgTime.get(configKey) || 0;
-      if (Date.now() - lastMsg > 15000) {
+      // Increased to 45s to be more resilient to temporary stalls
+      if (Date.now() - lastMsg > 45000) {
         console.warn(`[Global WS] Stalled connection detected for ${configKey}. Closing...`);
         ws.terminate();
         clearInterval(exchangeWatchdog);
       }
-    }, 5000);
+    }, 10000);
 
     ws.on("open", () => {
       console.log(`[Global WS] Shared connection OPEN for ${configKey}`);
@@ -1373,32 +2273,39 @@ async function startServer() {
 
         const parsed = JSON.parse(rawData);
 
-        // Feed to global engine for server-side processing
-        serverEngine.updateData(cfg.exchange, cfg.marketType, parsed);
+        // Determine if this is ticker data
+        let isTicker = false;
+        if (cfg.exchange.startsWith('Bybit')) {
+          isTicker = parsed.topic?.startsWith('tickers');
+        } else if (cfg.exchange.startsWith('Binance')) {
+          const eventType = parsed.e || (parsed.data && parsed.data.e);
+          isTicker = eventType === '24hrTicker' || eventType === 'aggTrade' || eventType === 'trade';
+        }
+
+        // Feed to global engine for server-side processing (only if it's depth data)
+        if (!isTicker) {
+          serverEngine.updateData(cfg.exchange, cfg.marketType, parsed);
+        }
         
         const subscribers = exchangeSubscribers.get(configKey);
         const tickers = tickerSubscribers.get(configKey);
         
         if ((subscribers && subscribers.size > 0) || (tickers && tickers.size > 0)) {
-          // Determine if this is ticker data
-          let isTicker = false;
-          if (cfg.exchange.startsWith('Bybit')) {
-            isTicker = parsed.topic?.startsWith('tickers');
-          } else if (cfg.exchange.startsWith('Binance')) {
-            isTicker = parsed.e === '24hrTicker' || (parsed.data && parsed.data.e === '24hrTicker');
-          }
-
           if (isTicker) {
+            const cleanExchange = cfg.exchange.replace(':TICKERS', '');
             const message = JSON.stringify({
               type: "EXCHANGE_DATA",
               dataType: "TICKER",
-              exchange: cfg.exchange,
+              exchange: cleanExchange,
               marketType: cfg.marketType,
               data: parsed
             });
             tickers?.forEach(client => {
               if (client.readyState === WebSocket.OPEN) {
-                client.send(message);
+                // Ensure the client is on the charts connection if it's ticker data
+                if (chartsWss.clients.has(client)) {
+                  client.send(message);
+                }
               }
             });
             return;
@@ -1428,7 +2335,10 @@ async function startServer() {
           
           subscribers?.forEach(client => {
             if (client.readyState === WebSocket.OPEN) {
-              client.send(message);
+              // Ensure the client is on the densities connection if it's depth data
+              if (densitiesWss.clients.has(client)) {
+                client.send(message);
+              }
             }
           });
         }
@@ -1456,7 +2366,10 @@ async function startServer() {
         });
         subscribers.forEach(client => {
           if (client.readyState === WebSocket.OPEN) {
-            client.send(disconnectPayload);
+            // Only send to density clients who are interested in depth
+            if (densitiesWss.clients.has(client)) {
+              client.send(disconnectPayload);
+            }
           }
         });
       }
@@ -1509,7 +2422,9 @@ async function startServer() {
             });
             subscribers.forEach(client => {
               if (client.readyState === WebSocket.OPEN) {
-                client.send(errorPayload);
+                if (densitiesWss.clients.has(client)) {
+                  client.send(errorPayload);
+                }
               }
             });
           }
@@ -1530,7 +2445,9 @@ async function startServer() {
         });
         subscribers.forEach(client => {
           if (client.readyState === WebSocket.OPEN) {
-            client.send(errorPayload);
+            if (densitiesWss.clients.has(client)) {
+              client.send(errorPayload);
+            }
           }
         });
       }
@@ -1552,8 +2469,9 @@ async function startServer() {
     return ws;
   }
 
-  wss.on("connection", (clientWs: any) => {
-    console.log("[WS Proxy] Client connected");
+  // Densities connection handler
+  densitiesWss.on("connection", (clientWs: any) => {
+    console.log("[WS Densities] Client connected");
     const clientSubscriptions = new Set<string>();
 
     clientWs.on("message", (message) => {
@@ -1564,7 +2482,6 @@ async function startServer() {
           clientWs.userId = payload.userId;
           console.log(`[WS Support] Client identified as ${payload.userId}`);
           
-          // Update online status
           query("UPDATE users SET is_online = true, last_seen = NOW() WHERE id = $1", [payload.userId]).catch(err => {
             console.error("Failed to update is_online status:", err);
           });
@@ -1573,12 +2490,9 @@ async function startServer() {
 
         if (payload.type === "CONNECT_EXCHANGES") {
           const configs = payload.configs;
-          const tickers = payload.tickers || [];
           
-          // Clear old subscriptions for this client
           clientSubscriptions.forEach(key => {
             exchangeSubscribers.get(key)?.delete(clientWs);
-            tickerSubscribers.get(key)?.delete(clientWs);
           });
           clientSubscriptions.clear();
 
@@ -1591,25 +2505,8 @@ async function startServer() {
             }
             exchangeSubscribers.get(configKey)!.add(clientWs);
             
-            // Ensure the shared socket exists
             const ws = getExchangeSocket(cfg);
 
-            // Handle tickers if provided in initial connect
-            const relevantTickers = tickers.filter((t: any) => t.exchange === cfg.exchange && t.marketType === cfg.marketType);
-            if (relevantTickers.length > 0) {
-              if (!tickerSubscribers.has(configKey)) {
-                tickerSubscribers.set(configKey, new Set());
-              }
-              tickerSubscribers.get(configKey)!.add(clientWs);
-
-              if (cfg.exchange.startsWith('Bybit')) {
-                subscribeTickersBybit(ws, cfg.exchange, cfg.marketType, relevantTickers);
-              } else if (cfg.exchange.startsWith('Binance')) {
-                subscribeTickersBinance(ws, cfg.exchange, cfg.marketType, relevantTickers);
-              }
-            }
-
-            // Send cached snapshots immediately to the new client
             if (cfg.exchange.startsWith('Bybit') || cfg.exchange.startsWith('Binance')) {
               const prefix = `${configKey}:`;
               snapshotCache.forEach((snapshot, key) => {
@@ -1626,22 +2523,70 @@ async function startServer() {
             }
           });
         }
+      } catch (e) {
+        console.error("[WS Densities] Error parsing message:", e);
+      }
+    });
 
+    const heartbeatInterval = setInterval(() => {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify({ type: "HEARTBEAT", timestamp: Date.now() }));
+      }
+    }, 2000);
+
+    clientWs.on("close", () => {
+      console.log(`[WS Densities] Client disconnected: ${clientWs.userId || 'anonymous'}`);
+      if (clientWs.userId) {
+        query("UPDATE users SET is_online = false, last_seen = NOW() WHERE id = $1", [clientWs.userId]).catch(err => {
+          console.error("Failed to update offline status:", err);
+        });
+      }
+      clearInterval(heartbeatInterval);
+      clientSubscriptions.forEach(key => {
+        exchangeSubscribers.get(key)?.delete(clientWs);
+      });
+    });
+  });
+
+  // Charts connection handler
+  chartsWss.on("connection", (clientWs: any) => {
+    console.log("[WS Charts] Client connected");
+    const clientSubscriptions = new Set<string>();
+
+    clientWs.on("message", (message) => {
+      try {
+        const payload = JSON.parse(message.toString());
+        
         if (payload.type === "SUBSCRIBE_TICKERS") {
           const tickers = payload.tickers;
           tickers.forEach((t: any) => {
             const configKey = `${t.exchange}:${t.marketType}`;
-            if (!tickerSubscribers.has(configKey)) {
-              tickerSubscribers.set(configKey, new Set());
+            
+            // For Binance, use a separate socket for tickers to avoid network congestion from depth streams
+            const tickerConfigKey = t.exchange.startsWith('Binance') ? `${configKey}:TICKERS` : configKey;
+            
+            if (!tickerSubscribers.has(tickerConfigKey)) {
+              tickerSubscribers.set(tickerConfigKey, new Set());
             }
-            tickerSubscribers.get(configKey)!.add(clientWs);
-            clientSubscriptions.add(configKey);
+            tickerSubscribers.get(tickerConfigKey)!.add(clientWs);
+            clientSubscriptions.add(tickerConfigKey);
 
-            // Find or create the exchange socket
-            // We need the full config to create it if it doesn't exist
-            // For now assume it exists or we have enough info
-            // Actually we should probably have a way to get the base URL
-            const ws = globalExchangeSockets.get(configKey);
+            let ws = globalExchangeSockets.get(tickerConfigKey);
+            
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+              const baseUrl = t.exchange.startsWith('Binance') 
+                ? (t.marketType === 'SPOT' ? 'wss://stream.binance.com:9443' : 'wss://fstream.binance.com')
+                : (t.marketType === 'SPOT' ? 'wss://stream.bybit.com/v5/public/spot' : 'wss://stream.bybit.com/v5/public/linear');
+              
+              const cfg = {
+                exchange: t.exchange + (t.exchange.startsWith('Binance') ? ':TICKERS' : ''),
+                marketType: t.marketType,
+                wsUrl: t.exchange.startsWith('Binance') ? `${baseUrl}/ws` : baseUrl,
+                subscriptionMessages: []
+              };
+              ws = getExchangeSocket(cfg);
+            }
+
             if (ws) {
               if (t.exchange.startsWith('Bybit')) {
                 subscribeTickersBybit(ws, t.exchange, t.marketType, [t]);
@@ -1651,12 +2596,20 @@ async function startServer() {
             }
           });
         }
+
+        if (payload.type === "UNSUBSCRIBE_TICKERS") {
+          const tickers = payload.tickers;
+          tickers.forEach((t: any) => {
+            const configKey = `${t.exchange}:${t.marketType}`;
+            const tickerConfigKey = t.exchange.startsWith('Binance') ? `${configKey}:TICKERS` : configKey;
+            tickerSubscribers.get(tickerConfigKey)?.delete(clientWs);
+          });
+        }
       } catch (e) {
-        console.error("[WS Proxy] Error parsing message:", e);
+        console.error("[WS Charts] Error parsing message:", e);
       }
     });
 
-    // Frequent heartbeat to keep client watchdog alive and detect proxy stalls early
     const heartbeatInterval = setInterval(() => {
       if (clientWs.readyState === WebSocket.OPEN) {
         clientWs.send(JSON.stringify({ type: "HEARTBEAT", timestamp: Date.now() }));
@@ -1664,17 +2617,10 @@ async function startServer() {
     }, 2000);
 
     clientWs.on("close", () => {
-      console.log(`[WS Proxy] Client disconnected: ${clientWs.userId || 'anonymous'}`);
-      
-      if (clientWs.userId) {
-        query("UPDATE users SET is_online = false, last_seen = NOW() WHERE id = $1", [clientWs.userId]).catch(err => {
-          console.error("Failed to update offline status:", err);
-        });
-      }
-      
+      console.log("[WS Charts] Client disconnected");
       clearInterval(heartbeatInterval);
       clientSubscriptions.forEach(key => {
-        exchangeSubscribers.get(key)?.delete(clientWs);
+        tickerSubscribers.get(key)?.delete(clientWs);
       });
     });
   });

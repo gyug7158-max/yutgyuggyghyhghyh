@@ -131,6 +131,32 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
         <div className="flex items-center pl-2 md:pl-3 lg:pl-4 gap-2 md:gap-3 lg:gap-4 shrink-0 ml-auto relative z-[70]">
           {previewCoin && (
             <>
+              {/* ACTION BUTTONS (SIMULATOR) - Now to the left of AI Analysis */}
+              <div className="flex items-center shrink-0">
+                <button 
+                  onClick={() => {
+                    if (checkSubscription('Simulator')) {
+                      setIsReplayMode(!isReplayMode);
+                    }
+                  }}
+                  className={`flex items-center gap-1 md:gap-1 lg:gap-1.5 px-3 md:px-4 lg:px-6 py-1 md:py-1.5 border rounded-xl text-[8px] md:text-[9px] lg:text-[10px] font-black uppercase tracking-widest transition-all shrink-0 group relative overflow-hidden h-7 md:h-8 ${
+                    isReplayMode 
+                    ? 'bg-white border-white text-black shadow-[0_0_30px_rgba(255,255,255,0.4)] scale-105 min-w-[80px] md:min-w-[100px]' 
+                    : 'bg-[#1a1a1a] border-white/10 text-white/70 hover:text-white hover:border-white/30 hover:bg-[#222] shadow-lg'
+                   }`}
+                >
+                  {isReplayMode ? (
+                    <X size={14} strokeWidth={4} />
+                  ) : (
+                    <Rewind size={16} className="text-white group-hover:scale-110 transition-transform shrink-0" />
+                  )}
+                  <span className="hidden xl:inline">{isReplayMode ? 'ВЫЙТИ' : 'СИМУЛЯТОР'}</span>
+                  <span className="hidden lg:inline xl:hidden text-[8px] tracking-tighter">{isReplayMode ? 'ВЫЙТИ' : 'СИМУЛЯТОР'}</span>
+                  <span className="hidden md:inline lg:hidden text-[8px]">{isReplayMode ? 'ВЫЙТИ' : 'СИМ'}</span>
+                  <span className="md:hidden">{isReplayMode ? 'EXIT' : 'SIM'}</span>
+                </button>
+              </div>
+
               {/* AI ANALYSIS BUTTON */}
               <div className="flex items-center h-7 md:h-8 shrink-0">
                 <button 
@@ -147,32 +173,6 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
                   <span className="text-[8px] md:text-[10px] font-black text-white/90 tracking-tighter uppercase whitespace-nowrap">
                     {t.ai_analysis}
                   </span>
-                </button>
-              </div>
-
-              {/* ACTION BUTTONS (SIMULATOR) */}
-              <div className="flex items-center shrink-0">
-                <button 
-                  onClick={() => {
-                    if (checkSubscription('Simulator')) {
-                      setIsReplayMode(!isReplayMode);
-                    }
-                  }}
-                  className={`flex items-center gap-1 md:gap-1 lg:gap-1.5 px-1 md:px-1.5 xl:px-3 py-1 md:py-1.5 border rounded-xl text-[8px] md:text-[9px] lg:text-[10px] font-black uppercase tracking-widest transition-all shrink-0 group relative overflow-hidden ${
-                    isReplayMode 
-                    ? 'bg-white border-white text-black shadow-[0_0_30px_rgba(255,255,255,0.4)] scale-105' 
-                    : 'bg-[#1a1a1a] border-white/10 text-white/70 hover:text-white hover:border-white/30 hover:bg-[#222] shadow-lg'
-                  }`}
-                >
-                  {isReplayMode ? (
-                    <X size={14} strokeWidth={4} />
-                  ) : (
-                    <Rewind size={16} className="text-white group-hover:scale-110 transition-transform shrink-0" />
-                  )}
-                  <span className="hidden xl:inline">{isReplayMode ? 'ВЫЙТИ' : 'СИМУЛЯТОР'}</span>
-                  <span className="hidden lg:inline xl:hidden text-[8px] tracking-tighter">{isReplayMode ? 'ВЫЙТИ' : 'СИМУЛЯТОР'}</span>
-                  <span className="hidden md:inline lg:hidden text-[8px]">{isReplayMode ? 'ВЫЙТИ' : 'СИМ'}</span>
-                  <span className="md:hidden">SIM</span>
                 </button>
               </div>
             </>

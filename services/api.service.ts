@@ -1,5 +1,5 @@
 
-import { DBUser, DBAlert, DBTrade, SettingsState, SupportMessage } from '../models';
+import { DBUser, DBAlert, DBTrade, SettingsState, SupportMessage, EarningsSummary } from '../models';
 
 class ApiService {
   private static instance: ApiService;
@@ -37,12 +37,15 @@ class ApiService {
     const response = await fetch(`${this.baseUrl}${path}`, {
       ...options,
       headers,
+      cache: 'no-store', // Prevent caching of API responses
     });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      const errorMessage = errorData.error || errorData.message || `Request failed with status ${response.status}`;
-      throw new Error(errorMessage);
+      const error: any = new Error(errorData.error || errorData.message || `Request failed with status ${response.status}`);
+      error.status = response.status;
+      error.data = errorData;
+      throw error;
     }
 
     return response.json();
@@ -58,8 +61,19 @@ class ApiService {
     return result;
   }
 
-  public async register(data: any): Promise<{ user: DBUser, token: string }> {
-    const result = await this.request<{ user: DBUser, token: string }>('/auth/register', {
+  public async register(data: any): Promise<{ message: string, email: string }> {
+    return this.request<{ message: string, email: string }>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  public async getMe(): Promise<DBUser> {
+    return this.request<DBUser>('/auth/me');
+  }
+
+  public async verify(data: { email: string, code: string }): Promise<{ user: DBUser, token: string }> {
+    const result = await this.request<{ user: DBUser, token: string }>('/auth/verify', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -67,8 +81,25 @@ class ApiService {
     return result;
   }
 
-  public async getMe(): Promise<DBUser> {
-    return this.request<DBUser>('/auth/me');
+  public async resendCode(email: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>('/auth/resend-code', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  public async requestPasswordReset(email: string): Promise<{ message: string }> {
+    return this.request<{ message: string }>('/auth/reset-password-request', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+  }
+
+  public async confirmPasswordReset(data: { email: string, code: string, newPassword: string }): Promise<{ message: string }> {
+    return this.request<{ message: string }>('/auth/reset-password-confirm', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   public async getGoogleAuthUrl(): Promise<{ url: string }> {
@@ -176,6 +207,11 @@ class ApiService {
     return this.request<{ status: string }>('/db/status');
   }
 
+  // Ranks
+  public async getRanks(): Promise<Record<string, number>> {
+    return this.request<Record<string, number>>('/ranks');
+  }
+
   // Partner
   public async getPremiumHistory(userId: string): Promise<any[]> {
     return this.request<any[]>(`/partner/premium-history/${userId}`);
@@ -185,8 +221,8 @@ class ApiService {
     return this.request<any[]>(`/partner/referrals/${userId}`);
   }
 
-  public async getEarningsSummary(userId: string): Promise<{ total_earnings: number, total_withdrawn: number, available_balance: number }> {
-    return this.request<{ total_earnings: number, total_withdrawn: number, available_balance: number }>(`/partner/earnings-summary/${userId}`);
+  public async getEarningsSummary(userId: string): Promise<EarningsSummary> {
+    return this.request<EarningsSummary>(`/partner/earnings-summary/${userId}`);
   }
 
   public async simulatePurchase(data: { userId: string, planTier: string, amount: number, months: number }): Promise<any> {
@@ -203,6 +239,27 @@ class ApiService {
     });
   }
 
+  public async createHeleketPayment(data: { userId: string, plan: string, amount: number }): Promise<{ url: string }> {
+    return this.request<{ url: string }>('/payments/heleket/create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  public async createYookassaPayment(data: { userId: string, plan: string, amount: number }): Promise<{ url: string }> {
+    return this.request<{ url: string }>('/payments/yookassa/create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  public async createCryptomusPayment(data: { userId: string, plan: string, amount: number }): Promise<{ url: string }> {
+    return this.request<{ url: string }>('/payments/cryptomus/create', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   public async sendSupportMessage(userId: string, message: string): Promise<SupportMessage> {
     return this.request<SupportMessage>('/support/message', {
       method: 'POST',
@@ -212,6 +269,12 @@ class ApiService {
 
   public async getSupportHistory(userId: string): Promise<SupportMessage[]> {
     return this.request<SupportMessage[]>(`/support/history/${userId}`);
+  }
+
+  public async trackPartnerClick(partnerId: string): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>(`/partner/click/${partnerId}`, {
+      method: 'POST'
+    });
   }
 }
 

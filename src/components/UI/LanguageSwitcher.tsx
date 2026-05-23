@@ -25,7 +25,7 @@ export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({ language, se
     <div className="relative" ref={dropdownRef}>
       <button 
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 sm:gap-3 px-2 sm:px-4 py-1.5 sm:py-2 bg-white/5 border border-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all min-w-[60px] sm:min-w-[110px] justify-between group"
+        className="flex items-center gap-2 sm:gap-3 px-2 sm:px-4 py-1.5 sm:py-2 bg-white/[0.02] rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all min-w-[60px] sm:min-w-[110px] justify-between group"
       >
         <div className="flex items-center gap-1.5 sm:gap-2">
           <Globe size={14} className="text-white transition-colors" />
