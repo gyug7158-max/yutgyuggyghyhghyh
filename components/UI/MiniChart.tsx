@@ -438,7 +438,18 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
       }
 
       if (candlesFound.length > 0) {
-        setCandles(candlesFound);
+        setCandles(prev => {
+          if (prev.length > 0) {
+            const lastPrev = prev[prev.length - 1];
+            const lastFound = candlesFound[candlesFound.length - 1];
+            if (lastPrev && lastFound && lastFound.time === lastPrev.time) {
+              lastFound.high = Math.max(lastFound.high, lastPrev.high);
+              lastFound.low = Math.min(lastFound.low, lastPrev.low);
+              lastFound.close = lastPrev.close;
+            }
+          }
+          return candlesFound;
+        });
         setActiveVariant(variantUsed);
       } else if (!numericPrice) {
         setFetchError(true);
@@ -451,7 +462,17 @@ export const MiniChart = React.memo(forwardRef<any, MiniChartProps>(({
     }
   }, [symbol, timeframe, marketType, exchange, numericPrice]);
 
-  // Intentionally removed polling interval for chart history to avoid conflicting with live updates.
+  useEffect(() => {
+    if (isReplayMode) return;
+
+    const interval = setInterval(() => {
+      if (!isSyncing) {
+        loadChartData();
+      }
+    }, 60000);
+    
+    return () => clearInterval(interval);
+  }, [symbol, timeframe, isSyncing, isReplayMode, loadChartData]);
 
   useEffect(() => {
     let isDisposed = false;
