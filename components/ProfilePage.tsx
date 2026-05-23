@@ -640,38 +640,36 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
           
           <div className="h-6 w-px bg-white/10 mx-0.5 md:mx-1 hidden md:block"></div>
           
-          <div className="hidden md:flex items-center bg-white/[0.02] p-1 rounded-xl border border-white/5 lg:flex-1">
+          <div className="hidden md:flex items-center gap-0.5 lg:gap-1 bg-[#0c0c0e]/60 p-1 rounded-full border border-white/5 shadow-inner backdrop-blur-xl lg:flex-1">
             {[
               { id: 'profile', label: t.profile, icon: User },
               { id: 'subscription', label: t.subscription, icon: Star },
               { id: 'affiliate', label: t.affiliate, icon: Users },
               { id: 'guide', label: t.guide, icon: BookOpen },
               { id: 'support', label: t.support, icon: Headset },
-            ].map((tab, idx) => (
-              <React.Fragment key={tab.id}>
-                {idx > 0 && <div className="w-[1px] h-4 bg-white/10 mx-1 lg:mx-2 shrink-0" />}
-                <button
-                  onClick={() => {
-                    setActiveTab(tab.id as any);
-                  }}
-                  className={`flex items-center gap-2 px-3 xl:px-6 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all lg:flex-1 lg:justify-center border group ${
-                    activeTab === tab.id
-                      ? 'bg-white/12 text-white border-white/15 shadow-[0_4px_20px_rgba(255,255,255,0.05)]'
-                      : 'bg-transparent text-white/60 hover:text-white/90 border-transparent hover:bg-white/[0.03]'
-                  }`}
-                >
-                  {tab.id === 'subscription' ? (
-                    <img 
-                      src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
-                      alt=""
-                      className={`w-5 h-5 flex-shrink-0 transition-all duration-300 drop-shadow-[0_0_8px_rgba(250,204,21,0.4)] ${activeTab === tab.id ? 'scale-125 brightness-125' : 'opacity-85 group-hover:opacity-100 group-hover:scale-110'}`} 
-                    />
-                  ) : (
-                    <tab.icon size={14} className={activeTab === tab.id ? 'text-white' : 'text-white/60 group-hover:text-white/95'} />
-                  )}
-                  <span className="whitespace-nowrap">{tab.label}</span>
-                </button>
-              </React.Fragment>
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id as any);
+                }}
+                className={`flex items-center gap-1.5 lg:gap-2.5 px-2 md:px-4 lg:px-6 py-2.5 rounded-full text-[10px] font-black uppercase tracking-[0.1em] transition-all duration-500 backdrop-blur-md border shadow-lg lg:flex-1 lg:justify-center ${
+                  activeTab === tab.id
+                    ? 'bg-white/10 text-white border-white/40 ring-1 ring-white/10'
+                    : 'bg-white/[0.03] text-gray-500 hover:text-white hover:bg-white/10 border-white/20'
+                }`}
+              >
+                                {tab.id === 'subscription' ? (
+                  <img 
+                    src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
+                    alt=""
+                    className={`w-5 h-5 flex-shrink-0 transition-all duration-300 drop-shadow-[0_0_8px_rgba(250,204,21,0.4)] ${activeTab === tab.id ? 'scale-125 brightness-125' : 'opacity-70 group-hover:opacity-100 group-hover:scale-110'}`} 
+                  />
+                ) : (
+                  <tab.icon size={14} strokeWidth={3} className={activeTab === tab.id ? 'text-white' : 'text-gray-500 group-hover:text-white'} />
+                )}
+                <span className="whitespace-nowrap">{tab.label}</span>
+              </button>
             ))}
           </div>
 
@@ -900,36 +898,45 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
                           <div className="grid grid-cols-2 gap-2">
                             <button 
                               onClick={() => {
-                                setSelectedMethod('telegram_stars');
+                                setSelectedMethod('card');
                                 setPaymentError(false);
                               }}
-                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 col-span-2 relative overflow-hidden group/tg ${
-                                selectedMethod === 'telegram_stars' 
-                                ? 'border-white/60 shadow-[0_10px_30px_rgba(255,255,255,0.15)] scale-[1.01]' 
+                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 ${
+                                selectedMethod === 'card' 
+                                ? 'bg-white border-white shadow-[0_10px_30px_rgba(255,255,255,0.2)] scale-[1.01]' 
                                 : 'border-white/10 hover:border-white/30'
                               } backdrop-blur-md`}
-                              style={{
-                                background: selectedMethod === 'telegram_stars' 
-                                  ? 'linear-gradient(135deg, #60a5fa 0%, #a855f7 50%, #f43f5e 100%)'
-                                  : 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)',
-                              }}
+                              style={selectedMethod !== 'card' ? {
+                                background: 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)'
+                              } : {}}
                             >
-                              <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.5),transparent)]" />
-                              {selectedMethod === 'telegram_stars' && (
-                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent -translate-x-full animate-shimmer" />
-                              )}
-                              <img 
-                                src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
-                                alt="Stars" 
-                                className={`w-7 h-7 flex-shrink-0 transition-all duration-500 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${selectedMethod === 'telegram_stars' ? 'scale-110' : 'scale-100 group-hover/tg:scale-105'}`}
-                                referrerPolicy="no-referrer"
-                              />
-                              <div className="text-left overflow-hidden relative z-10">
-                                <div className={`text-[10px] font-black tracking-widest truncate ${selectedMethod === 'telegram_stars' ? 'text-white' : 'text-gray-300'}`}>
-                                  {t.telegram_stars}
+                              {/* Overlapping Bank Logos: Sberbank & T-Bank */}
+                              <div className="relative flex items-center h-5 w-8 flex-shrink-0 select-none">
+                                {/* Sberbank Logo */}
+                                <div 
+                                  className={`absolute left-0 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border flex items-center justify-center transition-all bg-[#21a038] shadow-[0_2px_6px_rgba(33,160,56,0.3)] ${
+                                    selectedMethod === 'card' ? 'border-white' : 'border-white/10'
+                                  }`}
+                                >
+                                  <svg viewBox="0 0 24 24" className="w-3 h-3" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="20 6 9 17 4 12"></polyline>
+                                  </svg>
                                 </div>
-                                <div className={`text-[8px] font-bold truncate ${selectedMethod === 'telegram_stars' ? 'text-white/80' : 'text-gray-500'}`}>
-                                  Fast & Secure
+                                {/* T-Bank Logo */}
+                                <div 
+                                  className={`absolute left-[13px] top-1/2 -translate-y-1/2 w-5 h-5 rounded-full border flex items-center justify-center transition-all bg-[#FFDD2D] shadow-[0_2px_6px_rgba(255,221,45,0.4)] z-10 ${
+                                    selectedMethod === 'card' ? 'border-white' : 'border-white/10'
+                                  }`}
+                                >
+                                  <span className="text-black font-black text-[11px] leading-none mb-[0.5px]">T</span>
+                                </div>
+                              </div>
+                              <div className="text-left overflow-hidden">
+                                <div className={`text-[10px] font-black tracking-widest truncate ${selectedMethod === 'card' ? 'text-black' : 'text-gray-300'}`}>
+                                  {t.card}
+                                </div>
+                                <div className={`text-[7.5px] font-bold leading-tight ${selectedMethod === 'card' ? 'text-gray-600' : 'text-gray-400'}`}>
+                                  {language === 'ru' ? 'SberPay, Банковская карта, T-Pay..., ЮMoney' : 'SberPay, Card, T-Pay..., YooMoney'}
                                 </div>
                               </div>
                             </button>
@@ -959,42 +966,35 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
 
                             <button 
                               onClick={() => {
-                                setSelectedMethod('card');
+                                setSelectedMethod('telegram_stars');
                                 setPaymentError(false);
                               }}
-                              className={`flex items-center gap-3 p-3 rounded-2xl border transition-all duration-300 ${
-                                selectedMethod === 'card' 
-                                ? 'bg-white border-white shadow-[0_10px_30px_rgba(255,255,255,0.2)] scale-[1.01]' 
+                              className={`flex items-center justify-center gap-3 p-4 rounded-2xl border transition-all duration-500 col-span-2 relative overflow-hidden group/tg ${
+                                selectedMethod === 'telegram_stars' 
+                                ? 'border-white/60 shadow-[0_10px_40px_rgba(255,255,255,0.15)] scale-[1.02]' 
                                 : 'border-white/10 hover:border-white/30'
-                              } backdrop-blur-md`}
-                              style={selectedMethod !== 'card' ? {
-                                background: 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)'
-                              } : {}}
+                              }`}
+                              style={{
+                                background: selectedMethod === 'telegram_stars' 
+                                  ? 'linear-gradient(135deg, #60a5fa 0%, #a855f7 50%, #f43f5e 100%)'
+                                  : 'linear-gradient(135deg, rgba(96,165,250,0.1) 0%, rgba(168,85,247,0.1) 50%, rgba(244,63,94,0.1) 100%)',
+                                backgroundSize: '200% 200%',
+                                animation: 'gradient-x 5s ease infinite'
+                              }}
                             >
-                              <div className="flex items-center -space-x-2.5 shrink-0">
-                                {/* SberPay Image Logo (First, in front, z-20) */}
-                                <img 
-                                  src="https://esa-res.online.sberbank.ru/ESA/sbol/r-94.0.0/images/hNnvG9ma72GAw3xUBlI9bA==.png" 
-                                  alt="Sber" 
-                                  referrerPolicy="no-referrer"
-                                  className="w-7 h-7 rounded-full object-cover border border-black/15 shadow-md relative z-20 scale-100 hover:scale-110 transition-transform duration-200 bg-white"
-                                />
-                                {/* T-Pay Image Logo (Second, behind Sber, z-10) */}
-                                <img 
-                                  src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTEYj4u6APZ85kDc1P-DeepzkoKTHKjhU_lLQ&s" 
-                                  alt="T-Pay" 
-                                  referrerPolicy="no-referrer"
-                                  className="w-7 h-7 rounded-full object-cover border border-black/15 shadow-md relative z-10 scale-100 hover:scale-110 transition-transform duration-200 bg-white"
-                                />
-                                {/* Plus Sign on the right of T-bank */}
-                                <span className={`text-[18px] font-black leading-none ml-3 z-30 transition-colors ${selectedMethod === 'card' ? 'text-black/60' : 'text-white/60'}`}>+</span>
-                              </div>
-                              <div className="text-left overflow-hidden ml-3">
-                                <div className={`text-[11px] font-black tracking-wider truncate ${selectedMethod === 'card' ? 'text-black' : 'text-gray-300'}`}>
-                                  {t.card}
-                                </div>
-                                <div className={`text-[9.5px] font-bold truncate ${selectedMethod === 'card' ? 'text-gray-500' : 'text-gray-400/80'}`}>
-                                  Сбербанк, Карта, T-Pay..., ЮMoney
+                              <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.5),transparent)]" />
+                              {selectedMethod === 'telegram_stars' && (
+                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/25 to-transparent -translate-x-full animate-shimmer" />
+                              )}
+                              <img 
+                                src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
+                                alt="Stars" 
+                                className={`w-7 h-7 flex-shrink-0 transition-all duration-500 drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] ${selectedMethod === 'telegram_stars' ? 'scale-125' : 'scale-100 group-hover/tg:scale-110'}`}
+                                referrerPolicy="no-referrer"
+                              />
+                              <div className="text-center relative z-10">
+                                <div className={`text-[13px] font-black tracking-[0.15em] transition-colors drop-shadow-lg ${selectedMethod === 'telegram_stars' ? 'text-white' : 'text-gray-200 group-hover/tg:text-white'}`}>
+                                  {t.telegram_stars}
                                 </div>
                               </div>
                             </button>
@@ -2581,17 +2581,17 @@ const ProfilePage: React.FC<ProfilePageProps> = ({
               setActiveTab(tab.id as any);
             }}
             className={`flex flex-col items-center justify-center gap-0.5 w-16 transition-all ${
-              activeTab === tab.id ? 'text-white' : 'text-white/60 active:text-white/90'
+              activeTab === tab.id ? 'text-white' : 'text-gray-500'
             }`}
           >
             {tab.id === 'subscription' ? (
               <img 
                 src="https://lztcdn.com/files/6514f1e6-dab4-4d49-806a-3ff22d7793e5.webp" 
                 alt=""
-                className={`w-[18px] h-[18px] flex-shrink-0 transition-all duration-300 drop-shadow-[0_0_8px_rgba(250,204,21,0.4)] ${activeTab === tab.id ? 'scale-110 brightness-125' : 'opacity-85'}`} 
+                className={`w-[18px] h-[18px] flex-shrink-0 transition-all duration-300 drop-shadow-[0_0_8px_rgba(250,204,21,0.4)] ${activeTab === tab.id ? 'scale-110 brightness-125' : 'opacity-70'}`} 
               />
             ) : (
-              <tab.icon size={18} className={activeTab === tab.id ? 'scale-110 text-white' : 'text-white/60'} />
+              <tab.icon size={18} className={activeTab === tab.id ? 'scale-110 text-white' : ''} />
             )}
             <span className="text-[8px] font-bold uppercase tracking-tighter">{tab.label}</span>
           </button>

@@ -119,6 +119,8 @@ export class ServerSmarteyeEngine {
           qty = item.size !== undefined ? +item.size : +item.qty;
         }
 
+        if (isNaN(price) || isNaN(qty)) continue;
+
         if (mid > 0 && Math.abs(price - mid) / mid > MAX_BOOK_DIST_PCT) { 
           map.delete(price); 
           continue; 

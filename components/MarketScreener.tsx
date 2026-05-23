@@ -281,19 +281,21 @@ const Sparkline = React.memo(({ symbol, exchange, market, isLong }: { symbol: st
     return () => { isMounted = false; };
   }, [symbol, exchange, market]);
 
-  if (loading || points.length < 2) return <div className="w-full h-full opacity-10 bg-white/5 rounded animate-pulse" />;
+  const validPoints = points.filter(p => typeof p === 'number' && !isNaN(p));
+  if (loading || validPoints.length < 2) return <div className="w-full h-full opacity-10 bg-white/5 rounded animate-pulse" />;
 
-  const min = Math.min(...points);
-  const max = Math.max(...points);
+  const min = Math.min(...validPoints);
+  const max = Math.max(...validPoints);
   const range = max - min || 1;
   const width = 120;
   const height = 30;
 
-  const pathData = points.map((p, i) => {
-    const x = (i / (points.length - 1)) * width;
+  const pathData = validPoints.map((p, i) => {
+    const x = (i / (validPoints.length - 1)) * width;
     const y = height - ((p - min) / range) * height;
+    if (isNaN(x) || isNaN(y)) return '';
     return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-  }).join(' ');
+  }).filter(Boolean).join(' ');
 
   const color = isLong ? '#00ff88' : '#ff3355';
 
@@ -729,17 +731,21 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
     lastFullFetchRef.current = now;
 
     try {
-      const fetchDirectProxy = async (proxyUrl: string) => {
-        const res = await fetch(proxyUrl);
-        if (!res.ok) throw new Error(`Proxy status ${res.status}`);
-        return await res.json();
+      const fetchWithTimeout = async (url: string) => {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return await res.json();
+        } catch (e) {
+          throw e;
+        }
       };
 
       const results = await Promise.allSettled([
-        fetchDirectProxy('/api/tickers/binance/spot'), 
-        fetchDirectProxy('/api/tickers/binance/futures'), 
-        fetchDirectProxy('/api/tickers/bybit/spot'), 
-        fetchDirectProxy('/api/tickers/bybit/linear'), 
+        fetchWithTimeout('/api/tickers/binance/spot'), 
+        fetchWithTimeout('/api/tickers/binance/futures'), 
+        fetchWithTimeout('/api/tickers/bybit/spot'), 
+        fetchWithTimeout('/api/tickers/bybit/linear'), 
       ]);
 
       const getTop50 = (list: MarketCoin[]) => {
@@ -821,8 +827,8 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
             // First, try to filter by active settings
             const filtered = allRawData.filter(c => freshExchanges[c.exchange] && freshTypes[c.market]);
             
-            // Prefer BTC FUTURES as the absolute default if no selection exists
-            const defaultCoin = allRawData.find(c => c.baseAsset === 'BTC' && c.market === 'FUTURES') || 
+            // Prefer BTC as the absolute default if no selection exists
+            const defaultCoin = allRawData.find(c => c.baseAsset === 'BTC' && c.market === 'SPOT') || 
                                 allRawData.find(c => c.baseAsset === 'BTC') ||
                                 filtered[0] ||
                                 allRawData[0] || 
@@ -886,8 +892,8 @@ const MarketScreener: React.FC<MarketScreenerProps> = ({
   // Ensure default coin selection triggers as soon as data and settings are both ready
   useEffect(() => {
     if (isSettingsLoaded && !previewCoin && data.length > 0) {
-      // Find default BTC coin first, prioritizing BTC Futures
-      const defaultCoin = data.find(c => c.baseAsset === 'BTC' && c.market === 'FUTURES') || 
+      // Find default BTC coin first, prioritizing BTC Spot
+      const defaultCoin = data.find(c => c.baseAsset === 'BTC' && c.market === 'SPOT') || 
                           data.find(c => c.baseAsset === 'BTC') ||
                           data[0];
       
