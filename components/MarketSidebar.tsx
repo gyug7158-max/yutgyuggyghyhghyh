@@ -123,10 +123,10 @@ export const MarketSidebar: React.FC<MarketSidebarProps> = ({
       };
 
       const results = await Promise.allSettled([
-        fetchDirectProxy('/api/tickers/binance/spot'),
-        fetchDirectProxy('/api/tickers/binance/futures'),
-        fetchDirectProxy('/api/tickers/bybit/spot'),
-        fetchDirectProxy('/api/tickers/bybit/linear'),
+        fetchDirectProxy('https://api.binance.com/api/v3/ticker/24hr'),
+        fetchDirectProxy('https://fapi.binance.com/fapi/v1/ticker/24hr'),
+        fetchDirectProxy('https://api.bybit.com/v5/market/tickers?category=spot'),
+        fetchDirectProxy('https://api.bybit.com/v5/market/tickers?category=linear'),
       ]);
 
       let coins: MarketCoin[] = [];
